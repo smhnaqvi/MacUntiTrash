@@ -189,7 +189,7 @@ export default function App() {
   const usedPct = volume ? Math.min(100, (volume.used / volume.total) * 100) : 0;
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-screen flex flex-col overflow-hidden">
       {/* Header */}
       <header className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between">
         <div>
