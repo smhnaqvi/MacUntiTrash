@@ -329,8 +329,15 @@ export default function App() {
                     </span>
                   </td>
                   <td className="py-2 pr-4 text-neutral-200">{f.label}</td>
-                  <td className="py-2 pr-4 text-neutral-500 font-mono text-xs truncate max-w-xs" title={f.path}>
-                    {f.path}
+                  <td className="py-2 pr-4 text-neutral-500 font-mono text-xs max-w-xs">
+                    <button
+                      onClick={() => revealInFinder(f.path)}
+                      disabled={busyAction === `reveal:${f.path}`}
+                      title={`Reveal ${f.path} in Finder`}
+                      className="block truncate max-w-xs text-left hover:text-neutral-200 hover:underline disabled:opacity-50"
+                    >
+                      {f.path}
+                    </button>
                   </td>
                   <td className="py-2 pr-4 text-right text-neutral-300 tabular-nums">{formatBytes(f.bytes)}</td>
                   <td className="py-2 text-right">
