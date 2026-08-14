@@ -329,13 +329,21 @@ export default function App() {
         {sorted.length > 0 && (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-neutral-500 border-b border-neutral-800">
-                <th className="py-2 pr-2 w-8"></th>
-                <th className="py-2 pr-4 w-20">Risk</th>
-                <th className="py-2 pr-4">What</th>
-                <th className="py-2 pr-4">Path</th>
-                <th className="py-2 pr-4 text-right w-24">Size</th>
-                <th className="py-2 w-16"></th>
+              <tr className="text-left text-xs text-neutral-500">
+                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 pr-2 w-8"></th>
+                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 pr-4 w-20">
+                  Risk
+                </th>
+                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 pr-4">
+                  What
+                </th>
+                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 pr-4">
+                  Path
+                </th>
+                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 pr-4 text-right w-24">
+                  Size
+                </th>
+                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 w-16"></th>
               </tr>
             </thead>
             <tbody>
