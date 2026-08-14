@@ -225,16 +225,48 @@ export default function App() {
         </div>
       </header>
 
-      {/* Volume bar */}
+      {/* System storage — sticky under the header so it stays visible while the findings list scrolls */}
       {volume && (
-        <div className="px-6 py-3 border-b border-neutral-800">
-          <div className="flex justify-between text-xs text-neutral-400 mb-1.5">
-            <span>
-              {formatBytes(volume.used)} used of {formatBytes(volume.total)}
+        <div className="sticky top-0 z-10 px-6 py-4 border-b border-neutral-800 bg-neutral-950">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-medium text-neutral-400 uppercase tracking-wide">System Storage</h2>
+            <span
+              className={`text-xs font-medium tabular-nums ${
+                usedPct > 90 ? "text-red-400" : usedPct > 75 ? "text-amber-400" : "text-neutral-500"
+              }`}
+            >
+              {usedPct.toFixed(0)}% used
             </span>
-            <span className={volume.free < 10 * 1024 ** 3 ? "text-red-400 font-medium" : ""}>
-              {formatBytes(volume.free)} free
-            </span>
+          </div>
+          <div className="grid grid-cols-4 gap-4 mb-3">
+            <div>
+              <div className="text-[11px] text-neutral-500">Total</div>
+              <div className="text-sm font-semibold text-neutral-200 tabular-nums">
+                {formatBytes(volume.total)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] text-neutral-500">Used</div>
+              <div className="text-sm font-semibold text-neutral-200 tabular-nums">
+                {formatBytes(volume.used)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] text-neutral-500">Free</div>
+              <div
+                className={`text-sm font-semibold tabular-nums ${
+                  volume.free < 10 * 1024 ** 3 ? "text-red-400" : "text-neutral-200"
+                }`}
+              >
+                {formatBytes(volume.free)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] text-neutral-500">Reclaimable</div>
+              <div className="text-sm font-semibold text-emerald-400 tabular-nums">
+                {done ? formatBytes(done.reclaimable) : "—"}
+              </div>
+            </div>
           </div>
           <div className="h-1.5 rounded-full bg-neutral-800 overflow-hidden">
             <div
