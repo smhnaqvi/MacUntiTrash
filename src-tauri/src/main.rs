@@ -13,6 +13,7 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Mutex;
 
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
@@ -40,10 +41,18 @@ fn resolve_script(app: &AppHandle) -> Result<PathBuf, String> {
     Err("mac-disk-scan.sh not found (checked bundled resources and src-tauri/bin/)".into())
 }
 
+/// Tracks the running scan's process group so `stop_scan` can kill it (and
+/// the `find`/`du` children mac-disk-scan.sh spawns) rather than just the
+/// top-level bash process.
+#[derive(Default)]
+struct ScanState {
+    pgid: Mutex<Option<i32>>,
+}
+
 /// Run the scanner and forward each stdout line to the frontend as a
 /// `scan-line` event, unparsed — the frontend owns the NDJSON schema.
 #[tauri::command]
-async fn run_scan(app: AppHandle, deep: bool) -> Result<(), String> {
+async fn run_scan(app: AppHandle, deep: bool, state: tauri::State<'_, ScanState>) -> Result<(), String> {
     let script = resolve_script(&app)?;
 
     let mut cmd = Command::new("bash");
@@ -52,10 +61,17 @@ async fn run_scan(app: AppHandle, deep: bool) -> Result<(), String> {
         cmd.arg("--deep");
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // Make bash the leader of a new process group so stop_scan can signal
+    // the whole tree (bash + the find/du/etc. it spawns) at once instead of
+    // just the immediate child, which would otherwise be left running.
+    cmd.process_group(0);
 
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("failed to start scan: {e}"))?;
+
+    let pid = child.id().map(|id| id as i32);
+    *state.pgid.lock().unwrap() = pid;
 
     let stdout = child
         .stdout
@@ -74,8 +90,28 @@ async fn run_scan(app: AppHandle, deep: bool) -> Result<(), String> {
             let _ = app_handle.emit("scan-line", line);
         }
         let _ = child.wait().await;
+        *app_handle.state::<ScanState>().pgid.lock().unwrap() = None;
     });
 
+    Ok(())
+}
+
+/// Kill the in-flight scan's whole process group. A no-op if nothing is
+/// running (e.g. the user double-clicks Stop, or it finished just before).
+#[tauri::command]
+fn stop_scan(app: AppHandle, state: tauri::State<'_, ScanState>) -> Result<(), String> {
+    let pgid = state.pgid.lock().unwrap().take();
+    let Some(pgid) = pgid else {
+        return Ok(());
+    };
+
+    // Negative pid = signal the whole process group, not just the leader.
+    let _ = std::process::Command::new("kill")
+        .arg("-KILL")
+        .arg(format!("-{pgid}"))
+        .status();
+
+    let _ = app.emit("scan-stopped", ());
     Ok(())
 }
 
@@ -132,8 +168,10 @@ fn trash_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
 
 fn main() {
     tauri::Builder::default()
+        .manage(ScanState::default())
         .invoke_handler(tauri::generate_handler![
             run_scan,
+            stop_scan,
             reveal_in_finder,
             open_fda_settings,
             trash_paths
