@@ -43,7 +43,7 @@ export default function App() {
   const [busyAction, setBusyAction] = useState<string | null>(null); // "trash" | "reveal:<path>" | null
   const [confirmTrash, setConfirmTrash] = useState<{ paths: string[]; bytes: number } | null>(null);
 
-  const unlistenRef = useRef<null | (() => void)>(null);
+  const unlistenRefs = useRef<Array<() => void>>([]);
 
   useEffect(() => {
     listen<string>("scan-line", (e) => {
@@ -79,9 +79,15 @@ export default function App() {
           break;
       }
     }).then((un) => {
-      unlistenRef.current = un;
+      unlistenRefs.current.push(un);
     });
-    return () => unlistenRef.current?.();
+    listen("scan-stopped", () => {
+      setScanning(false);
+      setStage(null);
+    }).then((un) => {
+      unlistenRefs.current.push(un);
+    });
+    return () => unlistenRefs.current.forEach((un) => un());
   }, []);
 
   const runScan = useCallback(async (deepMode: boolean) => {
@@ -99,6 +105,14 @@ export default function App() {
       setError(String(err));
       setScanning(false);
       setStage(null);
+    }
+  }, []);
+
+  const stopScan = useCallback(async () => {
+    try {
+      await invoke("stop_scan");
+    } catch (err) {
+      setError(String(err));
     }
   }, []);
 
@@ -193,13 +207,21 @@ export default function App() {
             />
             Deep scan (node_modules, files &gt; 500 MB)
           </label>
-          <button
-            onClick={() => runScan(deep)}
-            disabled={scanning}
-            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-sm font-medium transition-colors"
-          >
-            {scanning ? "Scanning…" : "Scan"}
-          </button>
+          {scanning ? (
+            <button
+              onClick={stopScan}
+              className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-red-600 text-neutral-200 hover:text-white text-sm font-medium transition-colors"
+            >
+              Stop scan
+            </button>
+          ) : (
+            <button
+              onClick={() => runScan(deep)}
+              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm font-medium transition-colors"
+            >
+              Scan
+            </button>
+          )}
         </div>
       </header>
 
