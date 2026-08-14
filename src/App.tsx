@@ -41,6 +41,7 @@ export default function App() {
   const [done, setDone] = useState<{ reclaimable: number; report: string; cleanup: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null); // "trash" | "reveal:<path>" | null
+  const [confirmTrash, setConfirmTrash] = useState<{ paths: string[]; bytes: number } | null>(null);
 
   const unlistenRef = useRef<null | (() => void)>(null);
 
@@ -123,15 +124,19 @@ export default function App() {
     setSelected(new Set());
   }
 
-  async function moveSelectedToTrash() {
+  function moveSelectedToTrash() {
     const paths = sorted.filter((f) => selected.has(f.key)).map((f) => f.path);
     if (paths.length === 0) return;
-    const confirmed = window.confirm(
-      `Move ${paths.length} item(s) to Trash, freeing about ${formatBytes(selectedBytes)}?\n\n` +
-        `Files go to Trash and can be restored until you empty it.`
-    );
-    if (!confirmed) return;
+    // A custom modal, not window.confirm() — Tauri's macOS webview (WKWebView)
+    // doesn't implement native JS confirm dialogs, so confirm() returns
+    // false immediately and silently no-ops the whole action.
+    setConfirmTrash({ paths, bytes: selectedBytes });
+  }
 
+  async function performTrash() {
+    if (!confirmTrash) return;
+    const { paths } = confirmTrash;
+    setConfirmTrash(null);
     setBusyAction("trash");
     setError(null);
     try {
@@ -359,6 +364,32 @@ export default function App() {
             <button onClick={() => revealInFinder(done.cleanup)} className="hover:text-neutral-200">
               Reveal cleanup.sh
             </button>
+          </div>
+        </div>
+      )}
+
+      {confirmTrash && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-6">
+          <div className="w-full max-w-sm rounded-xl border border-neutral-800 bg-neutral-950 p-5 shadow-xl">
+            <h2 className="text-sm font-semibold text-neutral-100">Move to Trash?</h2>
+            <p className="mt-2 text-sm text-neutral-400">
+              Move {confirmTrash.paths.length} item(s) to Trash, freeing about{" "}
+              {formatBytes(confirmTrash.bytes)}. Files can be restored until you empty the Trash.
+            </p>
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmTrash(null)}
+                className="px-3 py-1.5 rounded-md text-sm text-neutral-400 hover:text-neutral-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={performTrash}
+                className="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-500 text-sm font-medium"
+              >
+                Move to Trash
+              </button>
+            </div>
           </div>
         </div>
       )}
