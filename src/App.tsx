@@ -312,7 +312,7 @@ export default function App() {
                   <td className="py-2 pr-2">
                     <input
                       type="checkbox"
-                      className="accent-emerald-500"
+                      className="accent-emerald-500 h-5 w-5 cursor-pointer"
                       checked={selected.has(f.key)}
                       onChange={() => toggle(f.key)}
                     />
