@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "version:bump": "node scripts/bump-version.mjs",
-    "release": "npm run version:bump && tauri build"
+    "release": "npm run version:bump && tauri build",
+    "release:app-store": "node scripts/build-app-store.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
