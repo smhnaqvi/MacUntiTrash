@@ -31,6 +31,10 @@ if (!/^[A-Z0-9]{10}$/.test(team ?? "")) fail("Set APPLE_TEAM_ID to your 10-chara
 if (!/^[a-zA-Z0-9.-]+$/.test(identifier) || !identifier.includes(".")) fail("Set a valid bundle identifier in tauri.conf.json.");
 if (!appIdentity || !installerIdentity) fail("Set APPLE_SIGNING_IDENTITY and APPLE_INSTALLER_SIGNING_IDENTITY.");
 if (!profile || !existsSync(profile)) fail("Set APP_STORE_PROVISION_PROFILE to your Mac App Store Connect provisioning profile.");
+const xcode = "/Applications/Xcode.app/Contents/Developer";
+if (!process.env.DEVELOPER_DIR && existsSync(join(xcode, "usr/bin/xcodebuild"))) {
+  process.env.DEVELOPER_DIR = xcode;
+}
 run("xcodebuild", ["-version"]);
 mkdirSync(generated, { recursive: true });
 copyFileSync(profile, join(generated, "embedded.provisionprofile"));
