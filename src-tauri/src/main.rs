@@ -11,6 +11,8 @@
 // it). Run `npm install && npm run tauri dev` and fix whatever the compiler
 // flags — the most likely friction points are noted inline.
 
+use std::collections::HashMap;
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Mutex;
@@ -47,12 +49,22 @@ fn resolve_script(app: &AppHandle) -> Result<PathBuf, String> {
 #[derive(Default)]
 struct ScanState {
     pgid: Mutex<Option<i32>>,
+    findings: Mutex<HashMap<String, (u64, u64)>>,
 }
 
 /// Run the scanner and forward each stdout line to the frontend as a
 /// `scan-line` event, unparsed — the frontend owns the NDJSON schema.
 #[tauri::command]
-async fn run_scan(app: AppHandle, deep: bool, state: tauri::State<'_, ScanState>) -> Result<(), String> {
+async fn run_scan(
+    app: AppHandle,
+    deep: bool,
+    state: tauri::State<'_, ScanState>,
+) -> Result<(), String> {
+    let mut running = state.pgid.lock().map_err(|e| e.to_string())?;
+    if running.is_some() {
+        return Err("A scan is already running".into());
+    }
+    state.findings.lock().map_err(|e| e.to_string())?.clear();
     let script = resolve_script(&app)?;
 
     let mut cmd = Command::new("bash");
@@ -71,7 +83,8 @@ async fn run_scan(app: AppHandle, deep: bool, state: tauri::State<'_, ScanState>
         .map_err(|e| format!("failed to start scan: {e}"))?;
 
     let pid = child.id().map(|id| id as i32);
-    *state.pgid.lock().unwrap() = pid;
+    *running = pid;
+    drop(running);
 
     let stdout = child
         .stdout
@@ -87,10 +100,34 @@ async fn run_scan(app: AppHandle, deep: bool, state: tauri::State<'_, ScanState>
             }
             // Best-effort: a dropped event just means one row is missing,
             // not worth failing the whole scan over.
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                if value["type"] == "finding" {
+                    if let Some(path) = value["path"].as_str() {
+                        if let Ok(meta) = std::fs::symlink_metadata(path) {
+                            if !meta.file_type().is_symlink() {
+                                app_handle
+                                    .state::<ScanState>()
+                                    .findings
+                                    .lock()
+                                    .unwrap()
+                                    .insert(path.to_owned(), (meta.dev(), meta.ino()));
+                            }
+                        }
+                    }
+                }
+            }
             let _ = app_handle.emit("scan-line", line);
         }
-        let _ = child.wait().await;
-        *app_handle.state::<ScanState>().pgid.lock().unwrap() = None;
+        let result = child.wait().await;
+        let scan_state = app_handle.state::<ScanState>();
+        let mut running = scan_state.pgid.lock().unwrap();
+        // Stop may have cleared this scan while another was started.
+        if *running == pid {
+            *running = None;
+            if !matches!(result, Ok(status) if status.success()) {
+                let _ = app_handle.emit("scan-failed", "Scan process failed");
+            }
+        }
     });
 
     Ok(())
@@ -143,10 +180,24 @@ fn open_fda_settings() -> Result<(), String> {
 /// emptied, and Finder — not us — handles name collisions and permissions.
 /// Returns the subset of paths that failed, so the UI can report them.
 #[tauri::command]
-fn trash_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
+fn trash_paths(
+    paths: Vec<String>,
+    state: tauri::State<'_, ScanState>,
+) -> Result<Vec<String>, String> {
     let mut failures = Vec::new();
+    let mut findings = state.findings.lock().map_err(|e| e.to_string())?;
 
     for path in paths {
+        let valid = findings.get(&path).is_some_and(|&(dev, ino)| {
+            !path.chars().any(char::is_control)
+                && std::fs::symlink_metadata(&path).is_ok_and(|meta| {
+                    !meta.file_type().is_symlink() && meta.dev() == dev && meta.ino() == ino
+                })
+        });
+        if !valid {
+            failures.push(path);
+            continue;
+        }
         let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
             "tell application \"Finder\" to delete POSIX file \"{}\"",
@@ -158,7 +209,9 @@ fn trash_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
             .status();
 
         match status {
-            Ok(s) if s.success() => {}
+            Ok(s) if s.success() => {
+                findings.remove(&path);
+            }
             _ => failures.push(path),
         }
     }

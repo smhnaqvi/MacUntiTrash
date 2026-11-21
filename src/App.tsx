@@ -87,6 +87,13 @@ export default function App() {
     }).then((un) => {
       unlistenRefs.current.push(un);
     });
+    listen<string>("scan-failed", (e) => {
+      setError(e.payload);
+      setScanning(false);
+      setStage(null);
+    }).then((un) => {
+      unlistenRefs.current.push(un);
+    });
     return () => unlistenRefs.current.forEach((un) => un());
   }, []);
 
@@ -442,8 +449,8 @@ export default function App() {
           <div className="w-full max-w-sm rounded-xl border border-neutral-800 bg-neutral-950 p-5 shadow-xl">
             <h2 className="text-sm font-semibold text-neutral-100">Move to Trash?</h2>
             <p className="mt-2 text-sm text-neutral-400">
-              Move {confirmTrash.paths.length} item(s) to Trash, freeing about{" "}
-              {formatBytes(confirmTrash.bytes)}. Files can be restored until you empty the Trash.
+              Move {confirmTrash.paths.length} item(s) ({formatBytes(confirmTrash.bytes)}) to Trash.
+              Disk space is usually freed after you empty the Trash. Files can be restored until then.
             </p>
             <div className="mt-5 flex justify-end gap-3">
               <button
