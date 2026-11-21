@@ -2,37 +2,39 @@
 
 ![Disk Detective icon](src-tauri/icons/128x128.png)
 
-Disk Detective is a macOS utility for finding large caches, developer artifacts, and other places that may be using disk space. It shows each finding's size and path before you decide what to move to Trash.
+Disk Detective is a macOS app that shows which items occupy space inside a folder you choose. It scans locally and lets you review and move selected items to Trash.
 
 > [!IMPORTANT]
-> This project is an MVP in preparation for the **Mac App Store**. The current build is not an App Store release. Sandbox access, distribution signing, provisioning, and testing of the packaged app are still required.
+> Mac App Store preparation is in progress. A signed, sandboxed build must be tested before submission.
 
-## What it does
+## Features
 
-- Streams scan results with a progress stage and a Stop button.
-- Labels findings **SAFE** or **REVIEW**. Review every path before removing it; these labels are guidance, not a guarantee.
-- Reveals findings in Finder and moves selected items to Trash after confirmation. Disk space is usually reclaimed only after Trash is emptied.
-- Shows disk usage and warns when protected locations could not be read or Time Machine snapshots are present.
+- Choose a folder with the native macOS picker; only that folder is scanned.
+- See the allocated size of each top-level item larger than 10 MB. Every finding is marked **REVIEW**.
+- Reveal an item in Finder or move it to Trash after confirmation. Space is usually freed when Trash is emptied.
+- Stop a running scan and see a count of items that could not be read.
 
-Scans run locally. The scanner writes a text report and a commented-out cleanup script to `~/disk-report-YYYYMMDD-HHMM/`. The app does not upload scan results.
+The app does not upload scan results or create cleanup scripts. It uses React, TypeScript, Tailwind, Tauri, and Rust.
 
-## Run locally
+## Develop
 
-You need macOS, Xcode Command Line Tools, Rust, and Node.js with npm.
+Install Node.js, Rust, and Xcode Command Line Tools on macOS:
 
 ```bash
 npm ci
 npm run tauri dev
 ```
 
-The app uses React, TypeScript, and Tailwind for the interface, Tauri and Rust for the desktop process, and [mac-disk-scan.sh](src-tauri/bin/mac-disk-scan.sh) for the read-only scan. Rust handles scan lifecycle and Finder actions.
+Check changes with `npm run build` and `cargo test --manifest-path src-tauri/Cargo.toml --locked`.
 
-## Verify changes
+## Mac App Store build
+
+Register `com.smhnaqvi.diskdetective` in App Store Connect, create a **Mac App Store Connect** provisioning profile, and install Apple Distribution and Mac Installer Distribution certificates. A full Xcode installation is required.
+
+Set `APPLE_TEAM_ID`, `APPLE_SIGNING_IDENTITY`, `APPLE_INSTALLER_SIGNING_IDENTITY`, and `APP_STORE_PROVISION_PROFILE` in your build environment, then run:
 
 ```bash
-npm run build
-cargo check --manifest-path src-tauri/Cargo.toml --locked
-bash -n src-tauri/bin/mac-disk-scan.sh
+npm run release:app-store
 ```
 
-`npm run release` currently builds a local `.app` and `.dmg`; it does **not** produce a signed Mac App Store submission. Do not submit that output to App Store Connect.
+This creates a sandboxed `.app` and signed `.pkg` under `src-tauri/target/release/bundle/macos/`. Confirm the bundle ID, signing, sandbox permissions, and scan/Trash behavior on a clean Mac before uploading the package to App Store Connect. `npm run release:local` is only for local, non-store builds.
