@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-// ---- types mirroring the NDJSON events emitted by mac-disk-scan.sh --json ----
-type Risk = "safe" | "review";
+// Scan events from the Rust backend
+type Risk = "review";
 
 interface Finding {
   key: string; // path, used as the row/selection key
@@ -16,10 +16,7 @@ interface Finding {
 type ScanEvent =
   | { type: "stage"; name: string }
   | { type: "finding"; risk: Risk; label: string; path: string; bytes: number }
-  | { type: "blind"; path: string }
-  | { type: "volume"; total_bytes: number; used_bytes: number; free_bytes: number }
-  | { type: "snapshot_warning"; count: number }
-  | { type: "done"; reclaimable_bytes: number; blind_count: number; report: string; cleanup: string };
+  | { type: "done"; skipped: number };
 
 function formatBytes(n: number): string {
   if (!n || n <= 0) return "0 MB";
@@ -31,14 +28,12 @@ function formatBytes(n: number): string {
 
 export default function App() {
   const [scanning, setScanning] = useState(false);
-  const [deep, setDeep] = useState(true);
+  const [picking, setPicking] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
-  const [volume, setVolume] = useState<{ total: number; used: number; free: number } | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [blind, setBlind] = useState<string[]>([]);
-  const [snapshotCount, setSnapshotCount] = useState<number | null>(null);
-  const [done, setDone] = useState<{ reclaimable: number; report: string; cleanup: string } | null>(null);
+  const [folder, setFolder] = useState<string | null>(null);
+  const [done, setDone] = useState<{ skipped: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null); // "trash" | "reveal:<path>" | null
   const [confirmTrash, setConfirmTrash] = useState<{ paths: string[]; bytes: number } | null>(null);
@@ -57,23 +52,14 @@ export default function App() {
         case "stage":
           setStage(evt.name);
           break;
-        case "volume":
-          setVolume({ total: evt.total_bytes, used: evt.used_bytes, free: evt.free_bytes });
-          break;
         case "finding":
           setFindings((prev) => [
             ...prev,
             { key: evt.path, label: evt.label, path: evt.path, bytes: evt.bytes, risk: evt.risk },
           ]);
           break;
-        case "blind":
-          setBlind((prev) => (prev.includes(evt.path) ? prev : [...prev, evt.path]));
-          break;
-        case "snapshot_warning":
-          setSnapshotCount(evt.count);
-          break;
         case "done":
-          setDone({ reclaimable: evt.reclaimable_bytes, report: evt.report, cleanup: evt.cleanup });
+          setDone({ skipped: evt.skipped });
           setStage(null);
           setScanning(false);
           break;
@@ -97,18 +83,22 @@ export default function App() {
     return () => unlistenRefs.current.forEach((un) => un());
   }, []);
 
-  const runScan = useCallback(async (deepMode: boolean) => {
+  const runScan = useCallback(async () => {
+    setPicking(true);
     setScanning(true);
     setError(null);
     setStage("Starting…");
     setFindings([]);
     setSelected(new Set());
-    setBlind([]);
-    setSnapshotCount(null);
+    setFolder(null);
     setDone(null);
     try {
-      await invoke("run_scan", { deep: deepMode });
+      const selectedFolder = await invoke<string | null>("run_scan");
+      setPicking(false);
+      if (selectedFolder) setFolder(selectedFolder);
+      else { setScanning(false); setStage(null); }
     } catch (err) {
+      setPicking(false);
       setError(String(err));
       setScanning(false);
       setStage(null);
@@ -135,10 +125,6 @@ export default function App() {
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
-  }
-
-  function selectAllSafe() {
-    setSelected(new Set(sorted.filter((f) => f.risk === "safe").map((f) => f.key)));
   }
 
   function clearSelection() {
@@ -185,36 +171,16 @@ export default function App() {
     }
   }
 
-  async function openFullDiskAccessSettings() {
-    try {
-      await invoke("open_fda_settings");
-    } catch (err) {
-      setError(String(err));
-    }
-  }
-
-  const usedPct = volume ? Math.min(100, (volume.used / volume.total) * 100) : 0;
-
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       {/* Header */}
       <header className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">Disk Detective</h1>
-          <p className="text-xs text-neutral-500">Finds reclaimable space. Never deletes without asking.</p>
+          <p className="text-xs text-neutral-500">Scan a folder you choose. Review items before moving them to Trash.</p>
         </div>
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-neutral-400 select-none">
-            <input
-              type="checkbox"
-              className="accent-emerald-500"
-              checked={deep}
-              disabled={scanning}
-              onChange={(e) => setDeep(e.target.checked)}
-            />
-            Deep scan (node_modules, files &gt; 500 MB)
-          </label>
-          {scanning ? (
+          {scanning && !picking ? (
             <button
               onClick={stopScan}
               className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-red-600 text-neutral-200 hover:text-white text-sm font-medium transition-colors"
@@ -223,68 +189,17 @@ export default function App() {
             </button>
           ) : (
             <button
-              onClick={() => runScan(deep)}
+              onClick={runScan}
+              disabled={picking}
               className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm font-medium transition-colors"
             >
-              Scan
+              {picking ? "Choosing folder…" : "Choose folder to scan"}
             </button>
           )}
         </div>
       </header>
 
-      {/* System storage — sticky under the header so it stays visible while the findings list scrolls */}
-      {volume && (
-        <div className="sticky top-0 z-10 px-6 py-4 border-b border-neutral-800 bg-neutral-950">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-medium text-neutral-400 uppercase tracking-wide">System Storage</h2>
-            <span
-              className={`text-xs font-medium tabular-nums ${
-                usedPct > 90 ? "text-red-400" : usedPct > 75 ? "text-amber-400" : "text-neutral-500"
-              }`}
-            >
-              {usedPct.toFixed(0)}% used
-            </span>
-          </div>
-          <div className="grid grid-cols-4 gap-4 mb-3">
-            <div>
-              <div className="text-[11px] text-neutral-500">Total</div>
-              <div className="text-sm font-semibold text-neutral-200 tabular-nums">
-                {formatBytes(volume.total)}
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] text-neutral-500">Used</div>
-              <div className="text-sm font-semibold text-neutral-200 tabular-nums">
-                {formatBytes(volume.used)}
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] text-neutral-500">Free</div>
-              <div
-                className={`text-sm font-semibold tabular-nums ${
-                  volume.free < 10 * 1024 ** 3 ? "text-red-400" : "text-neutral-200"
-                }`}
-              >
-                {formatBytes(volume.free)}
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] text-neutral-500">Reclaimable</div>
-              <div className="text-sm font-semibold text-emerald-400 tabular-nums">
-                {done ? formatBytes(done.reclaimable) : "—"}
-              </div>
-            </div>
-          </div>
-          <div className="h-1.5 rounded-full bg-neutral-800 overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all ${
-                usedPct > 90 ? "bg-red-500" : usedPct > 75 ? "bg-amber-500" : "bg-emerald-500"
-              }`}
-              style={{ width: `${usedPct}%` }}
-            />
-          </div>
-        </div>
-      )}
+      {folder && <div className="px-6 py-2 text-xs text-neutral-400 truncate" title={folder}>Scanning: {folder}</div>}
 
       {/* Scanning status */}
       {scanning && stage && (
@@ -300,36 +215,11 @@ export default function App() {
         </div>
       )}
 
-      {/* Snapshot warning */}
-      {snapshotCount !== null && snapshotCount > 0 && (
-        <div className="mx-6 mt-3 px-3 py-2 rounded-md bg-amber-950/40 border border-amber-900/60 text-amber-300 text-sm">
-          Found {snapshotCount} local Time Machine snapshot(s) — these can pin tens of GB of deleted
-          files on disk. Thin them with <code className="text-amber-200">tmutil</code> in Terminal; not
-          automated here since it needs sudo.
-        </div>
-      )}
-
-      {/* Blind spots warning */}
-      {blind.length > 0 && (
-        <div className="mx-6 mt-3 px-3 py-2 rounded-md bg-amber-950/40 border border-amber-900/60 text-amber-300 text-sm flex items-center justify-between gap-4">
-          <span>
-            {blind.length} location(s) couldn't be read — likely hiding the largest items. Grant Full
-            Disk Access, fully quit and reopen this app, then scan again.
-          </span>
-          <button
-            onClick={openFullDiskAccessSettings}
-            className="shrink-0 px-3 py-1.5 rounded-md bg-amber-900/60 hover:bg-amber-900 text-xs font-medium whitespace-nowrap"
-          >
-            Open Settings
-          </button>
-        </div>
-      )}
-
       {/* Findings table */}
       <main className="flex-1 overflow-auto px-6 py-4">
         {sorted.length === 0 && !scanning && (
           <div className="h-full flex items-center justify-center text-neutral-600 text-sm">
-            Run a scan to see what's using your disk.
+            Choose a folder to see which items use space.
           </div>
         )}
 
@@ -366,13 +256,9 @@ export default function App() {
                   </td>
                   <td className="py-2 pr-4">
                     <span
-                      className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${
-                        f.risk === "safe"
-                          ? "bg-emerald-950 text-emerald-400"
-                          : "bg-amber-950 text-amber-400"
-                      }`}
+                      className="text-[11px] px-1.5 py-0.5 rounded font-medium bg-amber-950 text-amber-400"
                     >
-                      {f.risk === "safe" ? "SAFE" : "REVIEW"}
+                      REVIEW
                     </span>
                   </td>
                   <td className="py-2 pr-4 text-neutral-200">{f.label}</td>
@@ -404,13 +290,9 @@ export default function App() {
       </main>
 
       {/* Footer / action bar */}
-      {sorted.length > 0 && (
+      {sorted.length > 0 && !scanning && (
         <footer className="px-6 py-3 border-t border-neutral-800 flex items-center justify-between bg-neutral-950">
           <div className="flex items-center gap-3 text-sm">
-            <button onClick={selectAllSafe} className="text-neutral-400 hover:text-neutral-100 text-xs">
-              Select all SAFE
-            </button>
-            <span className="text-neutral-700">·</span>
             <button onClick={clearSelection} className="text-neutral-400 hover:text-neutral-100 text-xs">
               Clear
             </button>
@@ -429,18 +311,8 @@ export default function App() {
       )}
 
       {done && (
-        <div className="px-6 py-2 text-xs text-neutral-500 border-t border-neutral-900 flex items-center justify-between">
-          <span>
-            Scan complete. Full report and a commented-out cleanup script were also written to disk.
-          </span>
-          <div className="flex gap-3">
-            <button onClick={() => revealInFinder(done.report)} className="hover:text-neutral-200">
-              Reveal report
-            </button>
-            <button onClick={() => revealInFinder(done.cleanup)} className="hover:text-neutral-200">
-              Reveal cleanup.sh
-            </button>
-          </div>
+        <div className="px-6 py-2 text-xs text-neutral-500 border-t border-neutral-900">
+          Scan complete.{done.skipped > 0 ? ` ${done.skipped} item(s) could not be read.` : ""}
         </div>
       )}
 
