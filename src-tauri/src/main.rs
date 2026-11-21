@@ -10,6 +10,8 @@ use std::sync::{
 
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
+#[cfg(target_os = "macos")]
+use trash::macos::{DeleteMethod, TrashContextExtMacos};
 use walkdir::WalkDir;
 
 #[derive(Default)]
@@ -192,6 +194,9 @@ fn trash_paths(
     }
     let mut failures = Vec::new();
     let mut findings = state.findings.lock().map_err(|e| e.to_string())?;
+    let mut trash_context = trash::TrashContext::new();
+    #[cfg(target_os = "macos")]
+    trash_context.set_delete_method(DeleteMethod::NsFileManager);
     for path in paths {
         let item = PathBuf::from(&path);
         let valid = findings.get(&item).is_some_and(|&(dev, ino)| {
@@ -199,7 +204,7 @@ fn trash_paths(
                 !meta.file_type().is_symlink() && meta.dev() == dev && meta.ino() == ino
             })
         });
-        if !valid || trash::delete(&item).is_err() {
+        if !valid || trash_context.delete(&item).is_err() {
             failures.push(path);
         } else {
             findings.remove(&item);
