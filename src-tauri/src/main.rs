@@ -119,7 +119,8 @@ async fn run_scan(
             let _ = app_handle.emit("scan-line", line);
         }
         let result = child.wait().await;
-        let mut running = app_handle.state::<ScanState>().pgid.lock().unwrap();
+        let scan_state = app_handle.state::<ScanState>();
+        let mut running = scan_state.pgid.lock().unwrap();
         // Stop may have cleared this scan while another was started.
         if *running == pid {
             *running = None;
