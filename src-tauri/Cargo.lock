@@ -674,7 +674,7 @@ dependencies = [
 
 [[package]]
 name = "spaceglance"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "serde_json",
  "tauri",
