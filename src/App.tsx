@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 
 // Scan events from the Rust backend
@@ -27,6 +28,7 @@ function formatBytes(n: number): string {
 }
 
 export default function App() {
+  const [version, setVersion] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [picking, setPicking] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
@@ -39,6 +41,10 @@ export default function App() {
   const [confirmTrash, setConfirmTrash] = useState<{ paths: string[]; bytes: number } | null>(null);
 
   const unlistenRefs = useRef<Array<() => void>>([]);
+
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => setVersion(null));
+  }, []);
 
   useEffect(() => {
     listen<string>("scan-line", (e) => {
@@ -185,7 +191,9 @@ export default function App() {
       {/* Header */}
       <header className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight">SpaceGlance</h1>
+          <h1 className="text-lg font-semibold tracking-tight">
+            SpaceGlance {version && <span className="text-xs font-normal text-neutral-500">v{version}</span>}
+          </h1>
           <p className="text-xs text-neutral-500">Scan a folder you choose. Review items before moving them to Trash.</p>
         </div>
         <div className="flex items-center gap-3">
