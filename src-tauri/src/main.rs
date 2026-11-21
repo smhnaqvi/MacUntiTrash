@@ -53,6 +53,10 @@ struct ScanState {
 /// `scan-line` event, unparsed — the frontend owns the NDJSON schema.
 #[tauri::command]
 async fn run_scan(app: AppHandle, deep: bool, state: tauri::State<'_, ScanState>) -> Result<(), String> {
+    let mut running = state.pgid.lock().map_err(|e| e.to_string())?;
+    if running.is_some() {
+        return Err("A scan is already running".into());
+    }
     let script = resolve_script(&app)?;
 
     let mut cmd = Command::new("bash");
@@ -71,7 +75,8 @@ async fn run_scan(app: AppHandle, deep: bool, state: tauri::State<'_, ScanState>
         .map_err(|e| format!("failed to start scan: {e}"))?;
 
     let pid = child.id().map(|id| id as i32);
-    *state.pgid.lock().unwrap() = pid;
+    *running = pid;
+    drop(running);
 
     let stdout = child
         .stdout
@@ -89,8 +94,15 @@ async fn run_scan(app: AppHandle, deep: bool, state: tauri::State<'_, ScanState>
             // not worth failing the whole scan over.
             let _ = app_handle.emit("scan-line", line);
         }
-        let _ = child.wait().await;
-        *app_handle.state::<ScanState>().pgid.lock().unwrap() = None;
+        let result = child.wait().await;
+        let mut running = app_handle.state::<ScanState>().pgid.lock().unwrap();
+        // Stop may have cleared this scan while another was started.
+        if *running == pid {
+            *running = None;
+            if !matches!(result, Ok(status) if status.success()) {
+                let _ = app_handle.emit("scan-failed", "Scan process failed");
+            }
+        }
     });
 
     Ok(())

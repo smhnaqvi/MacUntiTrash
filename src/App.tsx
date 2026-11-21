@@ -87,6 +87,13 @@ export default function App() {
     }).then((un) => {
       unlistenRefs.current.push(un);
     });
+    listen<string>("scan-failed", (e) => {
+      setError(e.payload);
+      setScanning(false);
+      setStage(null);
+    }).then((un) => {
+      unlistenRefs.current.push(un);
+    });
     return () => unlistenRefs.current.forEach((un) => un());
   }, []);
 
