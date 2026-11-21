@@ -673,7 +673,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "disk-detective"
+name = "spaceglance"
 version = "0.1.6"
 dependencies = [
  "serde_json",

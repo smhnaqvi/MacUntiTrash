@@ -1,5 +1,5 @@
 [package]
-name = "disk-detective"
+name = "spaceglance"
 version = "0.1.6"
 edition = "2021"
 
@@ -14,5 +14,5 @@ walkdir = "2"
 trash = "5"
 
 [[bin]]
-name = "disk-detective"
+name = "spaceglance"
 path = "src/main.rs"

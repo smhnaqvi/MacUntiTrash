@@ -1,8 +1,8 @@
-# Disk Detective
+# SpaceGlance
 
-![Disk Detective icon](src-tauri/icons/128x128.png)
+![SpaceGlance icon](src-tauri/icons/128x128.png)
 
-Disk Detective is a macOS app that shows which items occupy space inside a folder you choose. It scans locally and lets you review and move selected items to Trash.
+SpaceGlance is a macOS app that shows which items occupy space inside a folder you choose. It scans locally and lets you review and move selected items to Trash.
 
 > [!IMPORTANT]
 > Mac App Store preparation is in progress. A signed, sandboxed build must be tested before submission.
@@ -29,7 +29,7 @@ Check changes with `npm run build` and `cargo test --manifest-path src-tauri/Car
 
 ## Mac App Store build
 
-Register `com.smhnaqvi.diskdetective` in App Store Connect, create a **Mac App Store Connect** provisioning profile, and install Apple Distribution and Mac Installer Distribution certificates. A full Xcode installation is required.
+Register `com.deviatech.spaceglance` in Apple Developer, create a **Mac App Store Connect** provisioning profile, and install Apple Distribution and Mac Installer Distribution certificates. A full Xcode installation is required.
 
 Set `APPLE_TEAM_ID`, `APPLE_SIGNING_IDENTITY`, `APPLE_INSTALLER_SIGNING_IDENTITY`, and `APP_STORE_PROVISION_PROFILE` in your build environment, then run:
 

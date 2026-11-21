@@ -219,7 +219,7 @@ fn main() {
             trash_paths
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Disk Detective");
+        .expect("error while running SpaceGlance");
 }
 
 #[cfg(test)]
@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn scanner_does_not_count_symlink_targets() {
         let base = std::env::temp_dir().join(format!(
-            "disk-detective-test-{}-{}",
+            "spaceglance-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
