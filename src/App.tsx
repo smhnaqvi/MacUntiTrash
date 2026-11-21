@@ -75,6 +75,11 @@ export default function App() {
     }).then((un) => {
       unlistenRefs.current.push(un);
     });
+    listen("scan-stopping", () => {
+      setStage("Stopping scan…");
+    }).then((un) => {
+      unlistenRefs.current.push(un);
+    });
     listen<string>("scan-failed", (e) => {
       setError(e.payload);
       setScanning(false);

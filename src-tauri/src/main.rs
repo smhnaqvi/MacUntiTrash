@@ -90,14 +90,19 @@ async fn run_scan(
             .is_some_and(|current| Arc::ptr_eq(current, &cancelled))
         {
             *active = None;
-            match outcome {
-                Ok(skipped) => emit_scan(
-                    &app_handle,
-                    serde_json::json!({"type":"done","skipped":skipped}),
-                ),
-                Err(error) => {
-                    scan_state.findings.lock().unwrap().clear();
-                    let _ = app_handle.emit("scan-failed", error);
+            if cancelled.load(Ordering::Relaxed) {
+                scan_state.findings.lock().unwrap().clear();
+                let _ = app_handle.emit("scan-stopped", ());
+            } else {
+                match outcome {
+                    Ok(skipped) => emit_scan(
+                        &app_handle,
+                        serde_json::json!({"type":"done","skipped":skipped}),
+                    ),
+                    Err(error) => {
+                        scan_state.findings.lock().unwrap().clear();
+                        let _ = app_handle.emit("scan-failed", error);
+                    }
                 }
             }
         }
@@ -156,10 +161,9 @@ fn scan_selected_folder(
 
 #[tauri::command]
 fn stop_scan(app: AppHandle, state: tauri::State<'_, ScanState>) -> Result<(), String> {
-    if let Some(cancelled) = state.active.lock().map_err(|e| e.to_string())?.take() {
+    if let Some(cancelled) = state.active.lock().map_err(|e| e.to_string())?.as_ref() {
         cancelled.store(true, Ordering::Relaxed);
-        state.findings.lock().map_err(|e| e.to_string())?.clear();
-        let _ = app.emit("scan-stopped", ());
+        let _ = app.emit("scan-stopping", ());
     }
     Ok(())
 }
