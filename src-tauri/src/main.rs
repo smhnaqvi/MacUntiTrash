@@ -96,6 +96,7 @@ async fn run_scan(
                     serde_json::json!({"type":"done","skipped":skipped}),
                 ),
                 Err(error) => {
+                    scan_state.findings.lock().unwrap().clear();
                     let _ = app_handle.emit("scan-failed", error);
                 }
             }

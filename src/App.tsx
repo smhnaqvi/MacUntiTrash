@@ -70,6 +70,8 @@ export default function App() {
     listen("scan-stopped", () => {
       setScanning(false);
       setStage(null);
+      setFindings([]);
+      setSelected(new Set());
     }).then((un) => {
       unlistenRefs.current.push(un);
     });
@@ -77,6 +79,8 @@ export default function App() {
       setError(e.payload);
       setScanning(false);
       setStage(null);
+      setFindings([]);
+      setSelected(new Set());
     }).then((un) => {
       unlistenRefs.current.push(un);
     });
@@ -290,7 +294,7 @@ export default function App() {
       </main>
 
       {/* Footer / action bar */}
-      {sorted.length > 0 && !scanning && (
+      {done && sorted.length > 0 && !scanning && (
         <footer className="px-6 py-3 border-t border-neutral-800 flex items-center justify-between bg-neutral-950">
           <div className="flex items-center gap-3 text-sm">
             <button onClick={clearSelection} className="text-neutral-400 hover:text-neutral-100 text-xs">
