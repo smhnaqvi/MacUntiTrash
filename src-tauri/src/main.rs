@@ -90,8 +90,14 @@ async fn run_scan(
             .is_some_and(|current| Arc::ptr_eq(current, &cancelled))
         {
             *active = None;
-            if let Err(error) = outcome {
-                let _ = app_handle.emit("scan-failed", error);
+            match outcome {
+                Ok(skipped) => emit_scan(
+                    &app_handle,
+                    serde_json::json!({"type":"done","skipped":skipped}),
+                ),
+                Err(error) => {
+                    let _ = app_handle.emit("scan-failed", error);
+                }
             }
         }
     });
@@ -102,12 +108,12 @@ fn scan_selected_folder(
     app: &AppHandle,
     root: &Path,
     cancelled: &AtomicBool,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let entries = fs::read_dir(root).map_err(|e| format!("Cannot read selected folder: {e}"))?;
     let mut skipped = 0;
     for entry in entries {
         if cancelled.load(Ordering::Relaxed) {
-            return Ok(());
+            return Ok(skipped);
         }
         let entry = match entry {
             Ok(entry) => entry,
@@ -127,7 +133,7 @@ fn scan_selected_folder(
         let (bytes, unreadable) = allocated_bytes(&path, cancelled);
         skipped += unreadable;
         if cancelled.load(Ordering::Relaxed) {
-            return Ok(());
+            return Ok(skipped);
         }
         if bytes < 10 * 1024 * 1024 {
             continue;
@@ -144,8 +150,7 @@ fn scan_selected_folder(
             serde_json::json!({"type":"finding","risk":"review","label":label,"path":path_string,"bytes":bytes}),
         );
     }
-    emit_scan(app, serde_json::json!({"type":"done","skipped":skipped}));
-    Ok(())
+    Ok(skipped)
 }
 
 #[tauri::command]
@@ -210,4 +215,30 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Disk Detective");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn scanner_does_not_count_symlink_targets() {
+        let base = std::env::temp_dir().join(format!(
+            "disk-detective-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let selected = base.join("selected");
+        fs::create_dir_all(&selected).unwrap();
+        let outside = base.join("outside");
+        fs::write(&outside, vec![1_u8; 1024 * 1024]).unwrap();
+        symlink(&outside, selected.join("link")).unwrap();
+        let (bytes, _) = allocated_bytes(&selected, &AtomicBool::new(false));
+        fs::remove_dir_all(&base).unwrap();
+        assert_eq!(bytes, 0);
+    }
 }

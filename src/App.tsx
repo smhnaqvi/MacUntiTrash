@@ -199,7 +199,7 @@ export default function App() {
         </div>
       </header>
 
-      {folder && <div className="px-6 py-2 text-xs text-neutral-400 truncate" title={folder}>Scanning: {folder}</div>}
+      {folder && <div className="px-6 py-2 text-xs text-neutral-400 truncate" title={folder}>Selected folder: {folder}</div>}
 
       {/* Scanning status */}
       {scanning && stage && (
