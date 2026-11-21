@@ -185,7 +185,7 @@ export default function App() {
       {/* Header */}
       <header className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight">Disk Detective</h1>
+          <h1 className="text-lg font-semibold tracking-tight">SpaceGlance</h1>
           <p className="text-xs text-neutral-500">Scan a folder you choose. Review items before moving them to Trash.</p>
         </div>
         <div className="flex items-center gap-3">

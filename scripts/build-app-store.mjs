@@ -69,8 +69,8 @@ writeFileSync(join(generated, "tauri.conf.json"), JSON.stringify({
 }, null, 2) + "\n");
 run("plutil", ["-lint", join(generated, "Entitlements.plist")]);
 run("npm", ["run", "tauri", "build", "--", "--bundles", "app", "--config", "src-tauri/.appstore/tauri.conf.json"]);
-const app = join(tauriDir, "target/release/bundle/macos/Disk Detective.app");
-const pkg = join(tauriDir, "target/release/bundle/macos/Disk Detective.pkg");
+const app = join(tauriDir, "target/release/bundle/macos/SpaceGlance.app");
+const pkg = join(tauriDir, "target/release/bundle/macos/SpaceGlance.pkg");
 run("codesign", ["--verify", "--deep", "--strict", app]);
 const signedEntitlements = join(generated, "signed-entitlements.plist");
 rmSync(signedEntitlements, { force: true });
