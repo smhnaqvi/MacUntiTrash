@@ -39,6 +39,16 @@ writeFileSync(join(generated, "Entitlements.plist"), `<?xml version="1.0" encodi
 </dict></plist>
 `);
 writeFileSync(join(generated, "tauri.conf.json"), JSON.stringify({
+  app: {
+    security: {
+      csp: {
+        "default-src": "'self'",
+        "connect-src": "ipc: http://ipc.localhost",
+        "img-src": "'self' data:",
+        "style-src": "'self' 'unsafe-inline'",
+      },
+    },
+  },
   bundle: {
     targets: ["app"],
     resources: [],
