@@ -35,9 +35,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns"
     ],
-    "resources": [
-      "bin/mac-disk-scan.sh"
-    ],
     "macOS": {
       "minimumSystemVersion": "11.0"
     },

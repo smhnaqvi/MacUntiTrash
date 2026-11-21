@@ -219,7 +219,7 @@ export default function App() {
       <main className="flex-1 overflow-auto px-6 py-4">
         {sorted.length === 0 && !scanning && (
           <div className="h-full flex items-center justify-center text-neutral-600 text-sm">
-            Choose a folder to see which items use space.
+            {folder ? "No items over 10 MB were found." : "Choose a folder to see which items use space."}
           </div>
         )}
 
