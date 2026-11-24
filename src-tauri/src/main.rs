@@ -17,6 +17,7 @@ use walkdir::WalkDir;
 #[derive(Default)]
 struct ScanState {
     active: Mutex<Option<Arc<AtomicBool>>>,
+    root: Mutex<Option<PathBuf>>,
     findings: Mutex<HashMap<PathBuf, (u64, u64)>>,
 }
 
@@ -68,6 +69,49 @@ async fn run_scan(
         return Err("Select a folder to scan".into());
     }
 
+    start_scan(app, &state, root.clone(), Some(root)).map(Some)
+}
+
+fn validate_scan_folder(root: &Path, requested: &Path) -> Result<PathBuf, String> {
+    let relative = requested
+        .strip_prefix(root)
+        .map_err(|_| "Folder is outside the selected location".to_string())?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err("Invalid folder path".into());
+        };
+        current.push(name);
+        let metadata = fs::symlink_metadata(&current).map_err(|e| e.to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err("Choose a folder inside the selected location".into());
+        }
+    }
+    Ok(current)
+}
+
+#[tauri::command]
+fn scan_folder(
+    app: AppHandle,
+    state: tauri::State<'_, ScanState>,
+    path: String,
+) -> Result<String, String> {
+    let root = state
+        .root
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or("Choose a folder to scan first")?;
+    let folder = validate_scan_folder(&root, Path::new(&path))?;
+    start_scan(app, &state, folder, None)
+}
+
+fn start_scan(
+    app: AppHandle,
+    state: &ScanState,
+    folder: PathBuf,
+    selected_root: Option<PathBuf>,
+) -> Result<String, String> {
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut active = state.active.lock().map_err(|e| e.to_string())?;
@@ -76,15 +120,24 @@ async fn run_scan(
         }
         *active = Some(cancelled.clone());
     }
+    if let Some(root) = selected_root {
+        *state.root.lock().map_err(|e| e.to_string())? = Some(root);
+    }
     state.findings.lock().map_err(|e| e.to_string())?.clear();
-    let chosen_path = root.display().to_string();
+    let chosen_path = folder.display().to_string();
+    let threshold =
+        if state.root.lock().map_err(|e| e.to_string())?.as_deref() == Some(folder.as_path()) {
+            10 * 1024 * 1024
+        } else {
+            0
+        };
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         emit_scan(
             &app_handle,
             serde_json::json!({"type":"stage","name":"Scanning selected folder…"}),
         );
-        let outcome = scan_selected_folder(&app_handle, &root, &cancelled);
+        let outcome = scan_selected_folder(&app_handle, &folder, threshold, &cancelled);
         let scan_state = app_handle.state::<ScanState>();
         let mut active = scan_state.active.lock().unwrap();
         if active
@@ -109,12 +162,13 @@ async fn run_scan(
             }
         }
     });
-    Ok(Some(chosen_path))
+    Ok(chosen_path)
 }
 
 fn scan_selected_folder(
     app: &AppHandle,
     root: &Path,
+    threshold: u64,
     cancelled: &AtomicBool,
 ) -> Result<usize, String> {
     let entries = fs::read_dir(root).map_err(|e| format!("Cannot read selected folder: {e}"))?;
@@ -143,7 +197,7 @@ fn scan_selected_folder(
         if cancelled.load(Ordering::Relaxed) {
             return Ok(skipped);
         }
-        if bytes < 10 * 1024 * 1024 {
+        if bytes < threshold {
             continue;
         }
         let label = entry.file_name().to_string_lossy().into_owned();
@@ -155,7 +209,7 @@ fn scan_selected_folder(
             .insert(path.clone(), (meta.dev(), meta.ino()));
         emit_scan(
             app,
-            serde_json::json!({"type":"finding","risk":"review","label":label,"path":path_string,"bytes":bytes}),
+            serde_json::json!({"type":"finding","risk":"review","label":label,"path":path_string,"bytes":bytes,"isDir":meta.is_dir()}),
         );
     }
     Ok(skipped)
@@ -219,6 +273,7 @@ fn main() {
         .manage(ScanState::default())
         .invoke_handler(tauri::generate_handler![
             run_scan,
+            scan_folder,
             stop_scan,
             reveal_in_finder,
             trash_paths
@@ -250,5 +305,30 @@ mod tests {
         let (bytes, _) = allocated_bytes(&selected, &AtomicBool::new(false));
         fs::remove_dir_all(&base).unwrap();
         assert_eq!(bytes, 0);
+    }
+
+    #[test]
+    fn navigation_stays_inside_selected_folder_and_rejects_symlinks() {
+        let base = std::env::temp_dir().join(format!(
+            "spaceglance-navigation-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = base.join("selected");
+        let child = root.join("child");
+        fs::create_dir_all(&child).unwrap();
+        let outside = base.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join("link")).unwrap();
+
+        assert_eq!(validate_scan_folder(&root, &child).unwrap(), child);
+        assert!(validate_scan_folder(&root, &outside).is_err());
+        assert!(validate_scan_folder(&root, &root.join("../outside")).is_err());
+        assert!(validate_scan_folder(&root, &root.join("link")).is_err());
+
+        fs::remove_dir_all(&base).unwrap();
     }
 }
