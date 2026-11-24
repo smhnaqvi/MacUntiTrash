@@ -12,19 +12,34 @@ interface Finding {
   path: string;
   bytes: number;
   risk: Risk;
+  isDir: boolean;
 }
 
 type ScanEvent =
   | { type: "stage"; name: string }
-  | { type: "finding"; risk: Risk; label: string; path: string; bytes: number }
+  | { type: "finding"; risk: Risk; label: string; path: string; bytes: number; isDir: boolean }
   | { type: "done"; skipped: number };
 
 function formatBytes(n: number): string {
-  if (!n || n <= 0) return "0 MB";
+  if (!n || n <= 0) return "0 B";
   const gb = n / 1024 ** 3;
   if (gb >= 1) return `${gb.toFixed(1)} GB`;
   const mb = n / 1024 ** 2;
-  return `${mb.toFixed(0)} MB`;
+  if (mb >= 1) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+function ItemIcon({ directory }: { directory: boolean }) {
+  return directory ? (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <path d="M3.5 7a2 2 0 0 1 2-2h4l2.1 2.3h6.9a2 2 0 0 1 2 2v8.2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7Z" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <path d="M6 3.5h7l5 5V19a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 5 19V5a1.5 1.5 0 0 1 1-1.5Z" />
+      <path d="M13 3.5V9h5" />
+    </svg>
+  );
 }
 
 export default function App() {
@@ -35,6 +50,7 @@ export default function App() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [folder, setFolder] = useState<string | null>(null);
+  const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   const [done, setDone] = useState<{ skipped: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null); // "trash" | "reveal:<path>" | null
@@ -61,7 +77,7 @@ export default function App() {
         case "finding":
           setFindings((prev) => [
             ...prev,
-            { key: evt.path, label: evt.label, path: evt.path, bytes: evt.bytes, risk: evt.risk },
+            { key: evt.path, label: evt.label, path: evt.path, bytes: evt.bytes, risk: evt.risk, isDir: evt.isDir },
           ]);
           break;
         case "done":
@@ -106,11 +122,12 @@ export default function App() {
     setFindings([]);
     setSelected(new Set());
     setFolder(null);
+    setCurrentFolder(null);
     setDone(null);
     try {
       const selectedFolder = await invoke<string | null>("run_scan");
       setPicking(false);
-      if (selectedFolder) setFolder(selectedFolder);
+      if (selectedFolder) { setFolder(selectedFolder); setCurrentFolder(selectedFolder); }
       else { setScanning(false); setStage(null); }
     } catch (err) {
       setPicking(false);
@@ -119,6 +136,26 @@ export default function App() {
       setStage(null);
     }
   }, []);
+
+  const openFolder = useCallback(async (path: string) => {
+    if (scanning || !folder || !currentFolder || path === currentFolder) return;
+    const previous = currentFolder;
+    setScanning(true);
+    setStage("Opening folder…");
+    setFindings([]);
+    setSelected(new Set());
+    setDone(null);
+    setError(null);
+    setCurrentFolder(path);
+    try {
+      await invoke("scan_folder", { path });
+    } catch (err) {
+      setCurrentFolder(previous);
+      setError(String(err));
+      setScanning(false);
+      setStage(null);
+    }
+  }, [scanning, folder, currentFolder]);
 
   const stopScan = useCallback(async () => {
     try {
@@ -129,6 +166,16 @@ export default function App() {
   }, []);
 
   const sorted = useMemo(() => [...findings].sort((a, b) => b.bytes - a.bytes), [findings]);
+  const largestBytes = sorted[0]?.bytes ?? 0;
+  const isRootView = currentFolder === folder;
+  const breadcrumbs = useMemo(() => {
+    if (!folder || !currentFolder) return [];
+    const rootName = folder.split("/").filter(Boolean).pop() ?? folder;
+    const relative = currentFolder.slice(folder.length).split("/").filter(Boolean);
+    return [{ label: rootName, path: folder }, ...relative.map((label, index) => ({
+      label, path: `${folder}/${relative.slice(0, index + 1).join("/")}`,
+    }))];
+  }, [folder, currentFolder]);
   const selectedBytes = useMemo(
     () => sorted.filter((f) => selected.has(f.key)).reduce((sum, f) => sum + f.bytes, 0),
     [sorted, selected]
@@ -187,173 +234,145 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
-      {/* Header */}
-      <header className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight">
-            SpaceGlance {version && <span className="text-xs font-normal text-neutral-500">v{version}</span>}
-          </h1>
-          <p className="text-xs text-neutral-500">Scan a folder you choose. Review items before moving them to Trash.</p>
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true"><span /></span>
+          <div>
+            <h1>SpaceGlance <span className="version">{version && "v" + version}</span></h1>
+            <p>Find what is taking up space, one folder at a time.</p>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="header-actions">
           {scanning && !picking ? (
-            <button
-              onClick={stopScan}
-              className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-red-600 text-neutral-200 hover:text-white text-sm font-medium transition-colors"
-            >
-              Stop scan
-            </button>
+            <button className="button button-secondary" onClick={stopScan}>Stop scan</button>
           ) : (
-            <button
-              onClick={runScan}
-              disabled={picking}
-              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm font-medium transition-colors"
-            >
-              {picking ? "Choosing folder…" : "Choose folder to scan"}
+            <button className="button button-primary" onClick={runScan} disabled={picking}>
+              {picking ? "Choosing folder…" : folder ? "Scan another folder" : "Choose a folder"}
             </button>
           )}
         </div>
       </header>
 
-      {folder && <div className="px-6 py-2 text-xs text-neutral-400 truncate" title={folder}>Selected folder: {folder}</div>}
-
-      {/* Scanning status */}
-      {scanning && stage && (
-        <div className="px-6 py-2 text-xs text-neutral-400 flex items-center gap-2 bg-neutral-900/50">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          {stage}
-        </div>
-      )}
-
-      {error && (
-        <div className="mx-6 mt-3 px-3 py-2 rounded-md bg-red-950/50 border border-red-900 text-red-300 text-sm">
-          {error}
-        </div>
-      )}
-
-      {/* Findings table */}
-      <main className="flex-1 overflow-auto px-6 py-4">
-        {sorted.length === 0 && !scanning && (
-          <div className="h-full flex items-center justify-center text-neutral-600 text-sm">
-            {folder ? "No items over 10 MB were found." : "Choose a folder to see which items use space."}
+      <div className="workspace">
+        <section className="context-panel" aria-label="Current scan">
+          <div className="eyebrow">YOUR SPACE / FOLDER EXPLORER</div>
+          <div className="context-main">
+            <div>
+              <h2>{currentFolder ? currentFolder.split("/").filter(Boolean).pop() : "Start with a folder"}</h2>
+              <p>{currentFolder ? "Explore the largest items, then decide what to keep." : "Pick any folder on your Mac to explore its contents."}</p>
+            </div>
+            {done && <span className="status-pill"><span className="status-dot" /> Scan complete</span>}
+            {scanning && <span className="status-pill status-active"><span className="status-dot" /> Scanning</span>}
           </div>
-        )}
+          {currentFolder && (
+            <div className="location-strip">
+              <div className="breadcrumbs" aria-label="Folder path">
+                {breadcrumbs.map((crumb, index) => (
+                  <span className="crumb" key={crumb.path}>
+                    {index > 0 && <span className="crumb-divider" aria-hidden="true">/</span>}
+                    {index === breadcrumbs.length - 1 ? (
+                      <span aria-current="page">{crumb.label}</span>
+                    ) : (
+                      <button onClick={() => openFolder(crumb.path)} disabled={scanning}>{crumb.label}</button>
+                    )}
+                  </span>
+                ))}
+              </div>
+              <span className="full-path" title={currentFolder}>{currentFolder}</span>
+            </div>
+          )}
+        </section>
 
-        {sorted.length > 0 && (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-neutral-500">
-                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 pr-2 w-8"></th>
-                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 pr-4 w-20">
-                  Risk
-                </th>
-                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 pr-4">
-                  What
-                </th>
-                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 pr-4">
-                  Path
-                </th>
-                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 pr-4 text-right w-24">
-                  Size
-                </th>
-                <th className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 py-2 w-16"></th>
-              </tr>
-            </thead>
-            <tbody>
+        {scanning && stage && <div className="scan-notice" role="status"><span className="scan-spinner" />{stage}</div>}
+        {error && <div className="error-notice" role="alert">{error}</div>}
+
+        <main className="results-panel">
+          <div className="results-heading">
+            <div>
+              <div className="eyebrow">SCAN RESULTS</div>
+              <h2>{currentFolder ? "Inside this folder" : "A clearer view of your storage"}</h2>
+              <p>{currentFolder
+                ? isRootView
+                  ? "Showing direct items of 10 MB or more. Open a folder to see every item inside."
+                  : "Showing all direct items. Folder sizes include their contents."
+                : "See the folders and files that matter, without guessing what is safe to remove."}</p>
+            </div>
+            {currentFolder && <span className="item-count">{sorted.length} {sorted.length === 1 ? "item" : "items"}</span>}
+          </div>
+
+          {sorted.length === 0 && !scanning && (
+            <div className="empty-state">
+              <div className="empty-glyph"><ItemIcon directory /></div>
+              <h3>{currentFolder ? "Nothing to show here" : "Your map starts here"}</h3>
+              <p>{currentFolder
+                ? isRootView ? "No direct items over 10 MB were found." : "This folder has no readable direct items."
+                : "Choose a folder to find its largest items and open them for a closer look."}</p>
+              {!currentFolder && <button className="button button-primary" onClick={runScan}>Choose a folder</button>}
+            </div>
+          )}
+
+          {sorted.length > 0 && (
+            <div className="results-list" role="list" aria-label="Folder contents">
+              <div className="list-labels" aria-hidden="true"><span>ITEM</span><span>SIZE</span><span>ACTIONS</span></div>
               {sorted.map((f) => (
-                <tr key={f.key} className="border-b border-neutral-900 hover:bg-neutral-900/40">
-                  <td className="py-2 pr-2">
-                    <input
-                      type="checkbox"
-                      className="accent-emerald-500 h-5 w-5 cursor-pointer"
-                      checked={selected.has(f.key)}
-                      onChange={() => toggle(f.key)}
-                    />
-                  </td>
-                  <td className="py-2 pr-4">
-                    <span
-                      className="text-[11px] px-1.5 py-0.5 rounded font-medium bg-amber-950 text-amber-400"
-                    >
-                      REVIEW
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4 text-neutral-200">{f.label}</td>
-                  <td className="py-2 pr-4 text-neutral-500 font-mono text-xs max-w-xs">
-                    <button
-                      onClick={() => revealInFinder(f.path)}
-                      disabled={busyAction === `reveal:${f.path}`}
-                      title={`Reveal ${f.path} in Finder`}
-                      className="block truncate max-w-xs text-left hover:text-neutral-200 hover:underline disabled:opacity-50"
-                    >
-                      {f.path}
-                    </button>
-                  </td>
-                  <td className="py-2 pr-4 text-right text-neutral-300 tabular-nums">{formatBytes(f.bytes)}</td>
-                  <td className="py-2 text-right">
-                    <button
-                      onClick={() => revealInFinder(f.path)}
-                      disabled={busyAction === `reveal:${f.path}`}
-                      className="text-xs text-neutral-500 hover:text-neutral-200"
-                    >
-                      Reveal
-                    </button>
-                  </td>
-                </tr>
+                <div className="result-row" role="listitem" key={f.key}>
+                  <label className="row-check">
+                    <input type="checkbox" checked={selected.has(f.key)} onChange={() => toggle(f.key)}
+                      disabled={scanning} aria-label={"Select " + f.label + " for Trash"} />
+                  </label>
+                  <span className={"item-icon" + (f.isDir ? " directory-icon" : "")}><ItemIcon directory={f.isDir} /></span>
+                  <div className="item-info">
+                    {f.isDir ? (
+                      <button className="item-name item-open" onClick={() => openFolder(f.path)} disabled={scanning}
+                        title={"Open " + f.path}>{f.label}<span aria-hidden="true">↗</span></button>
+                    ) : <span className="item-name">{f.label}</span>}
+                    <span className="item-path" title={f.path}>{f.path}</span>
+                    <span className="size-track" aria-hidden="true"><span style={{ width: (largestBytes ? Math.max(2, f.bytes / largestBytes * 100) : 2) + "%" }} /></span>
+                  </div>
+                  <span className="item-size">{formatBytes(f.bytes)}</span>
+                  <button className="text-action" onClick={() => revealInFinder(f.path)}
+                    disabled={busyAction === "reveal:" + f.path} title={"Reveal " + f.path + " in Finder"}>Reveal</button>
+                </div>
               ))}
-            </tbody>
-          </table>
-        )}
-      </main>
+            </div>
+          )}
+        </main>
+      </div>
 
-      {/* Footer / action bar */}
       {done && sorted.length > 0 && !scanning && (
-        <footer className="px-6 py-3 border-t border-neutral-800 flex items-center justify-between bg-neutral-950">
-          <div className="flex items-center gap-3 text-sm">
-            <button onClick={clearSelection} className="text-neutral-400 hover:text-neutral-100 text-xs">
-              Clear
-            </button>
-            <span className="text-neutral-500 ml-2">
-              {selected.size} selected — {formatBytes(selectedBytes)}
-            </span>
+        <footer className="action-bar">
+          <div className="selection-summary">
+            <span className="selection-count">{selected.size} selected</span>
+            <span className="selection-bytes">{formatBytes(selectedBytes)} listed size</span>
+            {selected.size > 0 && <button className="text-action" onClick={clearSelection}>Clear</button>}
           </div>
-          <button
-            onClick={moveSelectedToTrash}
-            disabled={selected.size === 0 || busyAction === "trash"}
-            className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-sm font-medium transition-colors"
-          >
-            {busyAction === "trash" ? "Moving to Trash…" : `Move ${selected.size || ""} to Trash`}
+          <button className="button button-danger" onClick={moveSelectedToTrash}
+            disabled={selected.size === 0 || busyAction === "trash"}>
+            {busyAction === "trash" ? "Moving to Trash…" : "Move to Trash"}
           </button>
         </footer>
       )}
-
       {done && (
-        <div className="px-6 py-2 text-xs text-neutral-500 border-t border-neutral-900">
-          Scan complete.{done.skipped > 0 ? ` ${done.skipped} item(s) could not be read.` : ""}
+        <div className="scan-footnote" role="status">
+          {done.skipped > 0
+            ? done.skipped + " entries were skipped or unavailable. Shown folder sizes may be incomplete."
+            : "Folder sizes are allocated disk space. Nothing moves to Trash without your confirmation."}
         </div>
       )}
 
       {confirmTrash && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-6">
-          <div className="w-full max-w-sm rounded-xl border border-neutral-800 bg-neutral-950 p-5 shadow-xl">
-            <h2 className="text-sm font-semibold text-neutral-100">Move to Trash?</h2>
-            <p className="mt-2 text-sm text-neutral-400">
-              Move {confirmTrash.paths.length} item(s) ({formatBytes(confirmTrash.bytes)}) to Trash.
-              Disk space is usually freed after you empty the Trash. Files can be restored until then.
-            </p>
-            <div className="mt-5 flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmTrash(null)}
-                className="px-3 py-1.5 rounded-md text-sm text-neutral-400 hover:text-neutral-100"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={performTrash}
-                className="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-500 text-sm font-medium"
-              >
-                Move to Trash
-              </button>
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setConfirmTrash(null);
+        }}>
+          <div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="trash-title">
+            <div className="eyebrow">REVIEW YOUR SELECTION</div>
+            <h2 id="trash-title">Move to Trash?</h2>
+            <p>{confirmTrash.paths.length} {confirmTrash.paths.length === 1 ? "item" : "items"} · {formatBytes(confirmTrash.bytes)} listed size. Space is usually freed after you empty Trash.</p>
+            <ul className="confirm-list">{confirmTrash.paths.map((path) => <li key={path} title={path}>{path}</li>)}</ul>
+            <div className="dialog-actions">
+              <button className="button button-secondary" onClick={() => setConfirmTrash(null)}>Cancel</button>
+              <button className="button button-danger" onClick={performTrash}>Move to Trash</button>
             </div>
           </div>
         </div>
