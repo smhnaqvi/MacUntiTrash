@@ -25,6 +25,7 @@
   },
   "bundle": {
     "active": true,
+    "resources": ["PrivacyInfo.xcprivacy"],
     "targets": [
       "app",
       "dmg"

@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::ffi::CString;
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -238,6 +240,52 @@ fn reveal_in_finder(path: String) -> Result<(), String> {
     }
 }
 
+fn volume_breakdown(
+    blocks: u64,
+    free: u64,
+    available: u64,
+    block_size: u64,
+) -> Result<(u64, u64, u64), String> {
+    if blocks == 0 || block_size == 0 || free > blocks || available > free {
+        return Err("Inconsistent volume information".into());
+    }
+    let bytes = |count: u64| {
+        count
+            .checked_mul(block_size)
+            .ok_or_else(|| "Volume size exceeds supported range".to_string())
+    };
+    Ok((bytes(blocks)?, bytes(blocks - free)?, bytes(available)?))
+}
+
+#[tauri::command]
+fn volume_stats(state: tauri::State<'_, ScanState>) -> Result<serde_json::Value, String> {
+    let root = state
+        .root
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or("Choose a folder to scan first")?;
+    let (total, used, available) = read_volume_stats(&root)?;
+    Ok(serde_json::json!({"total": total, "used": used, "available": available}))
+}
+
+fn read_volume_stats(root: &Path) -> Result<(u64, u64, u64), String> {
+    let path = CString::new(root.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+    let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: path is NUL-terminated and stats points to writable memory.
+    if unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    // SAFETY: statvfs returned success and initialized stats.
+    let stats = unsafe { stats.assume_init() };
+    volume_breakdown(
+        stats.f_blocks as u64,
+        stats.f_bfree as u64,
+        stats.f_bavail as u64,
+        stats.f_frsize as u64,
+    )
+}
+
 #[tauri::command]
 fn trash_paths(
     paths: Vec<String>,
@@ -276,6 +324,7 @@ fn main() {
             scan_folder,
             stop_scan,
             reveal_in_finder,
+            volume_stats,
             trash_paths
         ])
         .run(tauri::generate_context!())
@@ -330,5 +379,19 @@ mod tests {
         assert!(validate_scan_folder(&root, &root.join("link")).is_err());
 
         fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn volume_stats_keep_unavailable_space_separate() {
+        let (total, used, available) =
+            volume_breakdown(239_362_496, 52_562_496, 11_360_000, 1024).unwrap();
+        assert!(total > used + available);
+        assert_eq!(total - used - available, 41_202_496 * 1024);
+    }
+
+    #[test]
+    fn reads_volume_stats_for_a_local_folder() {
+        let (total, used, available) = read_volume_stats(&std::env::temp_dir()).unwrap();
+        assert!(total > 0 && used <= total && available <= total - used);
     }
 }

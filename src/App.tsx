@@ -15,6 +15,12 @@ interface Finding {
   isDir: boolean;
 }
 
+interface VolumeStats {
+  total: number;
+  used: number;
+  available: number;
+}
+
 type ScanEvent =
   | { type: "stage"; name: string }
   | { type: "finding"; risk: Risk; label: string; path: string; bytes: number; isDir: boolean }
@@ -23,10 +29,11 @@ type ScanEvent =
 function formatBytes(n: number): string {
   if (!n || n <= 0) return "0 B";
   const gb = n / 1024 ** 3;
-  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  if (gb >= 1) return `${gb.toFixed(1)} GiB`;
   const mb = n / 1024 ** 2;
-  if (mb >= 1) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
-  return `${Math.max(1, Math.round(n / 1024))} KB`;
+  if (mb >= 1) return `${mb.toFixed(mb < 10 ? 1 : 0)} MiB`;
+  if (n < 1024) return `${n} B`;
+  return `${Math.round(n / 1024)} KiB`;
 }
 
 function ItemIcon({ directory }: { directory: boolean }) {
@@ -51,6 +58,8 @@ export default function App() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [folder, setFolder] = useState<string | null>(null);
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
+  const [volume, setVolume] = useState<VolumeStats | null>(null);
+  const [volumeUnavailable, setVolumeUnavailable] = useState(false);
   const [done, setDone] = useState<{ skipped: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null); // "trash" | "reveal:<path>" | null
@@ -61,6 +70,15 @@ export default function App() {
   useEffect(() => {
     getVersion().then(setVersion).catch(() => setVersion(null));
   }, []);
+
+  useEffect(() => {
+    if (!folder) return;
+    let cancelled = false;
+    invoke<VolumeStats>("volume_stats")
+      .then((stats) => { if (!cancelled) setVolume(stats); })
+      .catch(() => { if (!cancelled) setVolumeUnavailable(true); });
+    return () => { cancelled = true; };
+  }, [folder]);
 
   useEffect(() => {
     listen<string>("scan-line", (e) => {
@@ -123,6 +141,8 @@ export default function App() {
     setSelected(new Set());
     setFolder(null);
     setCurrentFolder(null);
+    setVolume(null);
+    setVolumeUnavailable(false);
     setDone(null);
     try {
       const selectedFolder = await invoke<string | null>("run_scan");
@@ -167,6 +187,7 @@ export default function App() {
 
   const sorted = useMemo(() => [...findings].sort((a, b) => b.bytes - a.bytes), [findings]);
   const largestBytes = sorted[0]?.bytes ?? 0;
+  const unavailableBytes = volume ? Math.max(0, volume.total - volume.used - volume.available) : 0;
   const isRootView = currentFolder === folder;
   const breadcrumbs = useMemo(() => {
     if (!folder || !currentFolder) return [];
@@ -284,6 +305,36 @@ export default function App() {
           )}
         </section>
 
+        {folder && (
+          <section className="volume-panel" aria-label="Volume storage summary">
+            <div className="volume-heading">
+              <div>
+                <h2>Storage on this Mac volume</h2>
+                <p>Capacity is shared across APFS volumes. These figures are separate from the folder scan.</p>
+              </div>
+              {volume && <div className="volume-total"><strong>{formatBytes(volume.total)}</strong><span>capacity</span></div>}
+            </div>
+            {volume ? (
+              <>
+                <div className="volume-track" role="img" aria-label={
+                  "Volume capacity " + formatBytes(volume.total) + ", used " + formatBytes(volume.used) +
+                  ", available " + formatBytes(volume.available) + ", other or unavailable " + formatBytes(unavailableBytes)
+                }>
+                  <span className="volume-used" style={{ width: (volume.used / volume.total * 100) + "%" }} />
+                  <span className="volume-available" style={{ width: (volume.available / volume.total * 100) + "%" }} />
+                  <span className="volume-other" style={{ width: (unavailableBytes / volume.total * 100) + "%" }} />
+                </div>
+                <div className="volume-legend">
+                  <span><i className="legend-used" />Used <strong>{formatBytes(volume.used)}</strong></span>
+                  <span><i className="legend-available" />Available <strong>{formatBytes(volume.available)}</strong></span>
+                  <span><i className="legend-other" />Other or unavailable <strong>{formatBytes(unavailableBytes)}</strong></span>
+                </div>
+                <p className="volume-note">“Other” is the difference between capacity, this volume’s used space, and available space. Shared APFS storage and system reserves can affect it. Values are rounded for display.</p>
+              </>
+            ) : <p className="volume-loading">{volumeUnavailable ? "Volume information is unavailable on this Mac." : "Reading volume information…"}</p>}
+          </section>
+        )}
+
         {scanning && stage && <div className="scan-notice" role="status"><span className="scan-spinner" />{stage}</div>}
         {error && <div className="error-notice" role="alert">{error}</div>}
 
@@ -294,7 +345,7 @@ export default function App() {
               <h2>{currentFolder ? "Inside this folder" : "A clearer view of your storage"}</h2>
               <p>{currentFolder
                 ? isRootView
-                  ? "Showing direct items of 10 MB or more. Open a folder to see every item inside."
+                  ? "Showing direct items of 10 MiB or more. Open a folder to see every item inside."
                   : "Showing all direct items. Folder sizes include their contents."
                 : "See the folders and files that matter, without guessing what is safe to remove."}</p>
             </div>
@@ -306,7 +357,7 @@ export default function App() {
               <div className="empty-glyph"><ItemIcon directory /></div>
               <h3>{currentFolder ? "Nothing to show here" : "Your map starts here"}</h3>
               <p>{currentFolder
-                ? isRootView ? "No direct items over 10 MB were found." : "This folder has no readable direct items."
+                ? isRootView ? "No direct items over 10 MiB were found." : "This folder has no readable direct items."
                 : "Choose a folder to find its largest items and open them for a closer look."}</p>
               {!currentFolder && <button className="button button-primary" onClick={runScan}>Choose a folder</button>}
             </div>
