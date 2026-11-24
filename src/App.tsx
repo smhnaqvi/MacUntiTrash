@@ -23,6 +23,7 @@ interface VolumeStats {
 
 type ScanEvent =
   | { type: "stage"; name: string }
+  | { type: "progress"; path: string }
   | { type: "finding"; risk: Risk; label: string; path: string; bytes: number; isDir: boolean }
   | { type: "done"; skipped: number };
 
@@ -54,6 +55,7 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [picking, setPicking] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
+  const [currentScanPath, setCurrentScanPath] = useState<string | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [folder, setFolder] = useState<string | null>(null);
@@ -92,6 +94,9 @@ export default function App() {
         case "stage":
           setStage(evt.name);
           break;
+        case "progress":
+          setCurrentScanPath(evt.path);
+          break;
         case "finding":
           setFindings((prev) => [
             ...prev,
@@ -101,6 +106,7 @@ export default function App() {
         case "done":
           setDone({ skipped: evt.skipped });
           setStage(null);
+          setCurrentScanPath(null);
           setScanning(false);
           break;
       }
@@ -110,6 +116,7 @@ export default function App() {
     listen("scan-stopped", () => {
       setScanning(false);
       setStage(null);
+      setCurrentScanPath(null);
       setFindings([]);
       setSelected(new Set());
     }).then((un) => {
@@ -124,6 +131,7 @@ export default function App() {
       setError(e.payload);
       setScanning(false);
       setStage(null);
+      setCurrentScanPath(null);
       setFindings([]);
       setSelected(new Set());
     }).then((un) => {
@@ -137,6 +145,7 @@ export default function App() {
     setScanning(true);
     setError(null);
     setStage("Starting…");
+    setCurrentScanPath(null);
     setFindings([]);
     setSelected(new Set());
     setFolder(null);
@@ -157,11 +166,18 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("scan-my-files-requested", () => runScan(true)).then((remove) => { unlisten = remove; });
+    return () => unlisten?.();
+  }, [runScan]);
+
   const openFolder = useCallback(async (path: string) => {
     if (scanning || !folder || !currentFolder || path === currentFolder) return;
     const previous = currentFolder;
     setScanning(true);
     setStage("Opening folder…");
+    setCurrentScanPath(null);
     setFindings([]);
     setSelected(new Set());
     setDone(null);
@@ -259,7 +275,7 @@ export default function App() {
         <div className="brand">
           <div>
             <h1>SpaceGlance <span className="version">{version && "v" + version}</span></h1>
-            <p>Scan a folder. Review items before moving them to Trash.</p>
+            <p>Scan your Home folder or choose a location. Review before moving anything to Trash.</p>
           </div>
         </div>
         <div className="header-actions">
@@ -268,7 +284,7 @@ export default function App() {
           ) : (
             <>
               <button className="button button-primary" onClick={() => runScan(true)} disabled={picking}>
-                {picking ? "Opening…" : "Scan My Files"}
+                {picking ? "Opening…" : "Scan Storage"}
               </button>
               <button className="button button-secondary" onClick={() => runScan(false)} disabled={picking}>
                 Choose folder
@@ -279,7 +295,7 @@ export default function App() {
       </header>
 
       <div className="workspace">
-        {currentFolder && (
+        {!scanning && currentFolder && (
           <nav className="location-strip" aria-label="Current folder">
               <span className="location-label">Selected folder:</span>
               <div className="breadcrumbs" aria-label="Folder path">
@@ -300,7 +316,7 @@ export default function App() {
           </nav>
         )}
 
-        {folder && (
+        {!scanning && folder && (
           <section className="volume-panel" aria-label="Volume storage summary">
             <div className="volume-heading">
               <div>
@@ -330,10 +346,17 @@ export default function App() {
           </section>
         )}
 
-        {scanning && stage && <div className="scan-notice" role="status"><span className="scan-spinner" />{stage}</div>}
         {error && <div className="error-notice" role="alert">{error}</div>}
 
         <main className="results-panel">
+          {scanning ? <div className="scanning-state" role="status" aria-live="polite">
+            <div className="scanning-orbit"><span className="scan-spinner" /></div>
+            <h2>{picking ? "Waiting for folder access" : "Scanning storage"}</h2>
+            <p>{picking ? "Select your Home folder once to allow access." : stage || "Preparing scan…"}</p>
+            {currentScanPath && !picking && <div className="scanning-path" title={currentScanPath}>
+              <span>Checking now</span><strong>{currentScanPath}</strong>
+            </div>}
+          </div> : <>
           {currentFolder && <div className="results-heading">
             <div>
               <h2>{isRootView ? "Biggest items" : "Folder contents"}</h2>
@@ -346,10 +369,11 @@ export default function App() {
 
           {sorted.length === 0 && !scanning && (
             <div className="empty-state">
-              <h3>{currentFolder ? "Nothing to show here" : "Choose a folder to scan"}</h3>
+              <h3>{currentFolder ? "Nothing to show here" : "See what uses your storage"}</h3>
               <p>{currentFolder
                 ? isRootView ? "No direct items over 10 MiB were found." : "This folder has no readable direct items."
-                : "Find large files and folders, then open folders to inspect their contents."}</p>
+                : "Scan your Home folder, then open large folders to inspect their contents. macOS may ask for access."}</p>
+              {!currentFolder && <button className="button button-primary" onClick={() => runScan(true)}>Scan Storage</button>}
             </div>
           )}
 
@@ -377,6 +401,7 @@ export default function App() {
               ))}
             </div>
           )}
+          </>}
         </main>
       </div>
 
