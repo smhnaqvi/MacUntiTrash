@@ -43,6 +43,7 @@ writeFileSync(join(generated, "Entitlements.plist"), `<?xml version="1.0" encodi
 <plist version="1.0"><dict>
   <key>com.apple.security.app-sandbox</key><true/>
   <key>com.apple.security.files.user-selected.read-write</key><true/>
+  <key>com.apple.security.files.bookmarks.app-scope</key><true/>
   <key>com.apple.security.network.client</key><true/>
   <key>com.apple.application-identifier</key><string>${team}.${identifier}</string>
   <key>com.apple.developer.team-identifier</key><string>${team}</string>
@@ -79,6 +80,7 @@ run("codesign", ["-d", "--xml", "--entitlements", signedEntitlements, app]);
 const entitlements = plist(signedEntitlements);
 if (entitlements["com.apple.security.app-sandbox"] !== true ||
     entitlements["com.apple.security.files.user-selected.read-write"] !== true ||
+    entitlements["com.apple.security.files.bookmarks.app-scope"] !== true ||
     entitlements["com.apple.security.network.client"] !== true ||
     entitlements["com.apple.application-identifier"] !== `${team}.${identifier}`) {
   fail("Signed app is missing the required sandbox or file access entitlements.");

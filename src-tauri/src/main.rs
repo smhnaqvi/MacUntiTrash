@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::fs;
+use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,6 +14,7 @@ use std::sync::{
 
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
+use objc2_foundation::{NSData, NSString, NSURL, NSURLBookmarkCreationOptions, NSURLBookmarkResolutionOptions};
 #[cfg(target_os = "macos")]
 use trash::macos::{DeleteMethod, TrashContextExtMacos};
 use walkdir::WalkDir;
@@ -21,6 +24,86 @@ struct ScanState {
     active: Mutex<Option<Arc<AtomicBool>>>,
     root: Mutex<Option<PathBuf>>,
     findings: Mutex<HashMap<PathBuf, (u64, u64)>>,
+    home_scope: Mutex<Option<SecurityScope>>,
+}
+
+struct SecurityScope {
+    url: objc2::rc::Retained<NSURL>,
+    active: bool,
+}
+
+impl Drop for SecurityScope {
+    fn drop(&mut self) {
+        if self.active {
+            // SAFETY: This balances the successful access call for this URL.
+            unsafe { self.url.stopAccessingSecurityScopedResource() };
+        }
+    }
+}
+
+fn bookmark_file(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("home.bookmark"))
+}
+
+fn resolve_home_bookmark(bytes: &[u8], home: &Path) -> Option<SecurityScope> {
+    let data = NSData::with_bytes(bytes);
+    let mut stale = objc2::runtime::Bool::NO;
+    // SAFETY: `stale` is a valid mutable pointer for the duration of this call.
+    let url = unsafe {
+        NSURL::URLByResolvingBookmarkData_options_relativeToURL_bookmarkDataIsStale_error(
+            &data, NSURLBookmarkResolutionOptions::WithSecurityScope, None, &mut stale,
+        )
+    }.ok()?;
+    if stale.as_bool() {
+        return None;
+    }
+    // SAFETY: The URL came from a stored app-scoped security bookmark.
+    let active = unsafe { url.startAccessingSecurityScopedResource() };
+    let resolved_home = url.path()
+        .and_then(|path| PathBuf::from(path.to_string()).canonicalize().ok());
+    if !active || resolved_home.as_deref() != Some(home) {
+        if active {
+            unsafe { url.stopAccessingSecurityScopedResource() };
+        }
+        return None;
+    }
+    Some(SecurityScope { url, active })
+}
+
+#[tauri::command]
+async fn scan_my_files(app: AppHandle, state: tauri::State<'_, ScanState>) -> Result<Option<String>, String> {
+    if state.active.lock().map_err(|e| e.to_string())?.is_some() {
+        return Err("A scan is already running".into());
+    }
+    let home = app.path().home_dir().map_err(|e| e.to_string())?
+        .canonicalize().map_err(|e| e.to_string())?;
+    let saved = bookmark_file(&app).ok().and_then(|path| fs::read(path).ok());
+    let scope = saved.as_deref().and_then(|bytes| resolve_home_bookmark(bytes, &home));
+    let scope = if let Some(scope) = scope {
+        scope
+    } else {
+        let Some(chosen) = app.dialog().file().set_directory(&home).blocking_pick_folder() else {
+            return Ok(None);
+        };
+        let chosen = chosen.into_path().map_err(|e| e.to_string())?
+            .canonicalize().map_err(|e| e.to_string())?;
+        if chosen != home {
+            return Err("Select your Home folder to enable Scan My Files".into());
+        }
+        let url = NSURL::fileURLWithPath_isDirectory(&NSString::from_str(&home.to_string_lossy()), true);
+        let data = url.bookmarkDataWithOptions_includingResourceValuesForKeys_relativeToURL_error(
+            NSURLBookmarkCreationOptions::WithSecurityScope, None, None,
+        ).map_err(|e| format!("Could not save Home folder access: {e}"))?;
+        let path = bookmark_file(&app)?;
+        fs::create_dir_all(path.parent().ok_or("Invalid bookmark location")?).map_err(|e| e.to_string())?;
+        let mut file = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600)
+            .open(path).map_err(|e| e.to_string())?;
+        file.write_all(&data.to_vec()).map_err(|e| e.to_string())?;
+        // The open panel grants access for this session; a bookmark preserves it for future launches.
+        let active = unsafe { url.startAccessingSecurityScopedResource() };
+        SecurityScope { url, active }
+    };
+    start_scan(app, &state, home.clone(), Some(home), Some(scope)).map(Some)
 }
 
 fn emit_scan(app: &AppHandle, value: serde_json::Value) {
@@ -71,7 +154,7 @@ async fn run_scan(
         return Err("Select a folder to scan".into());
     }
 
-    start_scan(app, &state, root.clone(), Some(root)).map(Some)
+    start_scan(app, &state, root.clone(), Some(root), None).map(Some)
 }
 
 fn validate_scan_folder(root: &Path, requested: &Path) -> Result<PathBuf, String> {
@@ -105,7 +188,7 @@ fn scan_folder(
         .clone()
         .ok_or("Choose a folder to scan first")?;
     let folder = validate_scan_folder(&root, Path::new(&path))?;
-    start_scan(app, &state, folder, None)
+    start_scan(app, &state, folder, None, None)
 }
 
 fn start_scan(
@@ -113,6 +196,7 @@ fn start_scan(
     state: &ScanState,
     folder: PathBuf,
     selected_root: Option<PathBuf>,
+    scope: Option<SecurityScope>,
 ) -> Result<String, String> {
     let cancelled = Arc::new(AtomicBool::new(false));
     {
@@ -124,6 +208,7 @@ fn start_scan(
     }
     if let Some(root) = selected_root {
         *state.root.lock().map_err(|e| e.to_string())? = Some(root);
+        *state.home_scope.lock().map_err(|e| e.to_string())? = scope;
     }
     state.findings.lock().map_err(|e| e.to_string())?.clear();
     let chosen_path = folder.display().to_string();
@@ -321,6 +406,7 @@ fn main() {
         .manage(ScanState::default())
         .invoke_handler(tauri::generate_handler![
             run_scan,
+            scan_my_files,
             scan_folder,
             stop_scan,
             reveal_in_finder,

@@ -132,7 +132,7 @@ export default function App() {
     return () => unlistenRefs.current.forEach((un) => un());
   }, []);
 
-  const runScan = useCallback(async () => {
+  const runScan = useCallback(async (myFiles: boolean) => {
     setPicking(true);
     setScanning(true);
     setError(null);
@@ -145,7 +145,7 @@ export default function App() {
     setVolumeUnavailable(false);
     setDone(null);
     try {
-      const selectedFolder = await invoke<string | null>("run_scan");
+      const selectedFolder = await invoke<string | null>(myFiles ? "scan_my_files" : "run_scan");
       setPicking(false);
       if (selectedFolder) { setFolder(selectedFolder); setCurrentFolder(selectedFolder); }
       else { setScanning(false); setStage(null); }
@@ -266,9 +266,14 @@ export default function App() {
           {scanning && !picking ? (
             <button className="button button-secondary" onClick={stopScan}>Stop scan</button>
           ) : (
-            <button className="button button-primary" onClick={runScan} disabled={picking}>
-              {picking ? "Choosing folder…" : folder ? "Scan another folder" : "Choose a folder"}
-            </button>
+            <>
+              <button className="button button-primary" onClick={() => runScan(true)} disabled={picking}>
+                {picking ? "Opening…" : "Scan My Files"}
+              </button>
+              <button className="button button-secondary" onClick={() => runScan(false)} disabled={picking}>
+                Choose folder
+              </button>
+            </>
           )}
         </div>
       </header>
