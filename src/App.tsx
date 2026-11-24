@@ -186,7 +186,6 @@ export default function App() {
   }, []);
 
   const sorted = useMemo(() => [...findings].sort((a, b) => b.bytes - a.bytes), [findings]);
-  const largestBytes = sorted[0]?.bytes ?? 0;
   const unavailableBytes = volume ? Math.max(0, volume.total - volume.used - volume.available) : 0;
   const isRootView = currentFolder === folder;
   const breadcrumbs = useMemo(() => {
@@ -258,10 +257,9 @@ export default function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true"><span /></span>
           <div>
             <h1>SpaceGlance <span className="version">{version && "v" + version}</span></h1>
-            <p>Find what is taking up space, one folder at a time.</p>
+            <p>Scan a folder. Review items before moving them to Trash.</p>
           </div>
         </div>
         <div className="header-actions">
@@ -276,18 +274,9 @@ export default function App() {
       </header>
 
       <div className="workspace">
-        <section className="context-panel" aria-label="Current scan">
-          <div className="eyebrow">YOUR SPACE / FOLDER EXPLORER</div>
-          <div className="context-main">
-            <div>
-              <h2>{currentFolder ? currentFolder.split("/").filter(Boolean).pop() : "Start with a folder"}</h2>
-              <p>{currentFolder ? "Explore the largest items, then decide what to keep." : "Pick any folder on your Mac to explore its contents."}</p>
-            </div>
-            {done && <span className="status-pill"><span className="status-dot" /> Scan complete</span>}
-            {scanning && <span className="status-pill status-active"><span className="status-dot" /> Scanning</span>}
-          </div>
-          {currentFolder && (
-            <div className="location-strip">
+        {currentFolder && (
+          <nav className="location-strip" aria-label="Current folder">
+              <span className="location-label">Selected folder:</span>
               <div className="breadcrumbs" aria-label="Folder path">
                 {breadcrumbs.map((crumb, index) => (
                   <span className="crumb" key={crumb.path}>
@@ -301,16 +290,17 @@ export default function App() {
                 ))}
               </div>
               <span className="full-path" title={currentFolder}>{currentFolder}</span>
-            </div>
-          )}
-        </section>
+              {done && <span className="status-pill"><span className="status-dot" /> Complete</span>}
+              {scanning && <span className="status-pill status-active"><span className="status-dot" /> Scanning</span>}
+          </nav>
+        )}
 
         {folder && (
           <section className="volume-panel" aria-label="Volume storage summary">
             <div className="volume-heading">
               <div>
-                <h2>Storage on this Mac volume</h2>
-                <p>Capacity is shared across APFS volumes. These figures are separate from the folder scan.</p>
+                <h2>System storage</h2>
+                <p>Volume containing the selected folder</p>
               </div>
               {volume && <div className="volume-total"><strong>{formatBytes(volume.total)}</strong><span>capacity</span></div>}
             </div>
@@ -339,33 +329,28 @@ export default function App() {
         {error && <div className="error-notice" role="alert">{error}</div>}
 
         <main className="results-panel">
-          <div className="results-heading">
+          {currentFolder && <div className="results-heading">
             <div>
-              <div className="eyebrow">SCAN RESULTS</div>
-              <h2>{currentFolder ? "Inside this folder" : "A clearer view of your storage"}</h2>
-              <p>{currentFolder
-                ? isRootView
+              <h2>{isRootView ? "Biggest items" : "Folder contents"}</h2>
+              <p>{isRootView
                   ? "Showing direct items of 10 MiB or more. Open a folder to see every item inside."
-                  : "Showing all direct items. Folder sizes include their contents."
-                : "See the folders and files that matter, without guessing what is safe to remove."}</p>
+                  : "Showing all direct items. Folder sizes include their contents."}</p>
             </div>
-            {currentFolder && <span className="item-count">{sorted.length} {sorted.length === 1 ? "item" : "items"}</span>}
-          </div>
+            <span className="item-count">{sorted.length} {sorted.length === 1 ? "item" : "items"}</span>
+          </div>}
 
           {sorted.length === 0 && !scanning && (
             <div className="empty-state">
-              <div className="empty-glyph"><ItemIcon directory /></div>
-              <h3>{currentFolder ? "Nothing to show here" : "Your map starts here"}</h3>
+              <h3>{currentFolder ? "Nothing to show here" : "Choose a folder to scan"}</h3>
               <p>{currentFolder
                 ? isRootView ? "No direct items over 10 MiB were found." : "This folder has no readable direct items."
-                : "Choose a folder to find its largest items and open them for a closer look."}</p>
-              {!currentFolder && <button className="button button-primary" onClick={runScan}>Choose a folder</button>}
+                : "Find large files and folders, then open folders to inspect their contents."}</p>
             </div>
           )}
 
           {sorted.length > 0 && (
             <div className="results-list" role="list" aria-label="Folder contents">
-              <div className="list-labels" aria-hidden="true"><span>ITEM</span><span>SIZE</span><span>ACTIONS</span></div>
+              <div className="list-labels" aria-hidden="true"><span>What</span><span>Path</span><span>Size</span><span></span></div>
               {sorted.map((f) => (
                 <div className="result-row" role="listitem" key={f.key}>
                   <label className="row-check">
@@ -376,10 +361,9 @@ export default function App() {
                   <div className="item-info">
                     {f.isDir ? (
                       <button className="item-name item-open" onClick={() => openFolder(f.path)} disabled={scanning}
-                        title={"Open " + f.path}>{f.label}<span aria-hidden="true">↗</span></button>
+                        title={"Open " + f.path}>{f.label}<span aria-hidden="true">›</span></button>
                     ) : <span className="item-name">{f.label}</span>}
                     <span className="item-path" title={f.path}>{f.path}</span>
-                    <span className="size-track" aria-hidden="true"><span style={{ width: (largestBytes ? Math.max(2, f.bytes / largestBytes * 100) : 2) + "%" }} /></span>
                   </div>
                   <span className="item-size">{formatBytes(f.bytes)}</span>
                   <button className="text-action" onClick={() => revealInFinder(f.path)}
