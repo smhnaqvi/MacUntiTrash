@@ -3130,6 +3130,8 @@ name = "spaceglance"
 version = "0.1.8"
 dependencies = [
  "libc",
+ "objc2",
+ "objc2-foundation",
  "serde_json",
  "tauri",
  "tauri-build",

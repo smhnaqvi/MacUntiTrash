@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
@@ -23,6 +23,7 @@ interface VolumeStats {
 
 type ScanEvent =
   | { type: "stage"; name: string }
+  | { type: "progress"; path: string }
   | { type: "finding"; risk: Risk; label: string; path: string; bytes: number; isDir: boolean }
   | { type: "done"; skipped: number };
 
@@ -54,6 +55,7 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [picking, setPicking] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
+  const [currentScanPath, setCurrentScanPath] = useState<string | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [folder, setFolder] = useState<string | null>(null);
@@ -64,8 +66,6 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null); // "trash" | "reveal:<path>" | null
   const [confirmTrash, setConfirmTrash] = useState<{ paths: string[]; bytes: number } | null>(null);
-
-  const unlistenRefs = useRef<Array<() => void>>([]);
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => setVersion(null));
@@ -81,7 +81,14 @@ export default function App() {
   }, [folder]);
 
   useEffect(() => {
-    listen<string>("scan-line", (e) => {
+    let disposed = false;
+    const removers: Array<() => void> = [];
+    const track = (subscription: Promise<() => void>) => subscription.then((remove) => {
+      if (disposed) remove();
+      else removers.push(remove);
+    });
+    track(listen<string>("scan-line", (e) => {
+      if (disposed) return;
       let evt: ScanEvent;
       try {
         evt = JSON.parse(e.payload);
@@ -92,6 +99,9 @@ export default function App() {
         case "stage":
           setStage(evt.name);
           break;
+        case "progress":
+          setCurrentScanPath(evt.path);
+          break;
         case "finding":
           setFindings((prev) => [
             ...prev,
@@ -101,42 +111,41 @@ export default function App() {
         case "done":
           setDone({ skipped: evt.skipped });
           setStage(null);
+          setCurrentScanPath(null);
           setScanning(false);
           break;
       }
-    }).then((un) => {
-      unlistenRefs.current.push(un);
-    });
-    listen("scan-stopped", () => {
+    }));
+    track(listen("scan-stopped", () => {
+      if (disposed) return;
       setScanning(false);
       setStage(null);
+      setCurrentScanPath(null);
       setFindings([]);
       setSelected(new Set());
-    }).then((un) => {
-      unlistenRefs.current.push(un);
-    });
-    listen("scan-stopping", () => {
+    }));
+    track(listen("scan-stopping", () => {
+      if (disposed) return;
       setStage("Stopping scan…");
-    }).then((un) => {
-      unlistenRefs.current.push(un);
-    });
-    listen<string>("scan-failed", (e) => {
+    }));
+    track(listen<string>("scan-failed", (e) => {
+      if (disposed) return;
       setError(e.payload);
       setScanning(false);
       setStage(null);
+      setCurrentScanPath(null);
       setFindings([]);
       setSelected(new Set());
-    }).then((un) => {
-      unlistenRefs.current.push(un);
-    });
-    return () => unlistenRefs.current.forEach((un) => un());
+    }));
+    return () => { disposed = true; removers.forEach((remove) => remove()); };
   }, []);
 
-  const runScan = useCallback(async () => {
+  const runScan = useCallback(async (myFiles: boolean) => {
     setPicking(true);
     setScanning(true);
     setError(null);
     setStage("Starting…");
+    setCurrentScanPath(null);
     setFindings([]);
     setSelected(new Set());
     setFolder(null);
@@ -145,7 +154,7 @@ export default function App() {
     setVolumeUnavailable(false);
     setDone(null);
     try {
-      const selectedFolder = await invoke<string | null>("run_scan");
+      const selectedFolder = await invoke<string | null>(myFiles ? "scan_my_files" : "run_scan");
       setPicking(false);
       if (selectedFolder) { setFolder(selectedFolder); setCurrentFolder(selectedFolder); }
       else { setScanning(false); setStage(null); }
@@ -157,11 +166,22 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    listen("scan-my-files-requested", () => { if (!disposed) runScan(true); }).then((remove) => {
+      if (disposed) remove();
+      else unlisten = remove;
+    });
+    return () => { disposed = true; unlisten?.(); };
+  }, [runScan]);
+
   const openFolder = useCallback(async (path: string) => {
     if (scanning || !folder || !currentFolder || path === currentFolder) return;
     const previous = currentFolder;
     setScanning(true);
     setStage("Opening folder…");
+    setCurrentScanPath(null);
     setFindings([]);
     setSelected(new Set());
     setDone(null);
@@ -259,22 +279,27 @@ export default function App() {
         <div className="brand">
           <div>
             <h1>SpaceGlance <span className="version">{version && "v" + version}</span></h1>
-            <p>Scan a folder. Review items before moving them to Trash.</p>
+            <p>Scan your Home folder or choose a location. Review before moving anything to Trash.</p>
           </div>
         </div>
         <div className="header-actions">
           {scanning && !picking ? (
             <button className="button button-secondary" onClick={stopScan}>Stop scan</button>
           ) : (
-            <button className="button button-primary" onClick={runScan} disabled={picking}>
-              {picking ? "Choosing folder…" : folder ? "Scan another folder" : "Choose a folder"}
-            </button>
+            <>
+              <button className="button button-primary" onClick={() => runScan(true)} disabled={picking}>
+                {picking ? "Opening…" : "Scan Storage"}
+              </button>
+              <button className="button button-secondary" onClick={() => runScan(false)} disabled={picking}>
+                Choose folder
+              </button>
+            </>
           )}
         </div>
       </header>
 
       <div className="workspace">
-        {currentFolder && (
+        {!scanning && currentFolder && (
           <nav className="location-strip" aria-label="Current folder">
               <span className="location-label">Selected folder:</span>
               <div className="breadcrumbs" aria-label="Folder path">
@@ -295,7 +320,7 @@ export default function App() {
           </nav>
         )}
 
-        {folder && (
+        {!scanning && folder && (
           <section className="volume-panel" aria-label="Volume storage summary">
             <div className="volume-heading">
               <div>
@@ -325,10 +350,17 @@ export default function App() {
           </section>
         )}
 
-        {scanning && stage && <div className="scan-notice" role="status"><span className="scan-spinner" />{stage}</div>}
         {error && <div className="error-notice" role="alert">{error}</div>}
 
         <main className="results-panel">
+          {scanning ? <div className="scanning-state" role="status" aria-live="polite">
+            <div className="scanning-orbit"><span className="scan-spinner" /></div>
+            <h2>{picking ? "Waiting for folder access" : "Scanning storage"}</h2>
+            <p>{picking ? "Select your Home folder once to allow access." : stage || "Preparing scan…"}</p>
+            {currentScanPath && !picking && <div className="scanning-path" title={currentScanPath}>
+              <span>Checking now</span><strong>{currentScanPath}</strong>
+            </div>}
+          </div> : <>
           {currentFolder && <div className="results-heading">
             <div>
               <h2>{isRootView ? "Biggest items" : "Folder contents"}</h2>
@@ -341,10 +373,11 @@ export default function App() {
 
           {sorted.length === 0 && !scanning && (
             <div className="empty-state">
-              <h3>{currentFolder ? "Nothing to show here" : "Choose a folder to scan"}</h3>
+              <h3>{currentFolder ? "Nothing to show here" : "See what uses your storage"}</h3>
               <p>{currentFolder
                 ? isRootView ? "No direct items over 10 MiB were found." : "This folder has no readable direct items."
-                : "Find large files and folders, then open folders to inspect their contents."}</p>
+                : "Scan your Home folder, then open large folders to inspect their contents. macOS may ask for access."}</p>
+              {!currentFolder && <button className="button button-primary" onClick={() => runScan(true)}>Scan Storage</button>}
             </div>
           )}
 
@@ -372,6 +405,7 @@ export default function App() {
               ))}
             </div>
           )}
+          </>}
         </main>
       </div>
 
