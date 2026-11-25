@@ -22,16 +22,19 @@ export default function StoragePopover() {
       .catch(() => { if (active) setError(true); });
     update();
     listen<Volume>("storage-updated", ({ payload }) => {
-      setVolume(payload);
-      setError(false);
-    }).then((remove) => { unlisten = remove; });
+      if (active) { setVolume(payload); setError(false); }
+    }).then((remove) => {
+      if (active) unlisten = remove;
+      else remove();
+    });
     return () => { active = false; unlisten?.(); };
   }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let active = true;
-    listen<ScanStatus>("scan-status", ({ payload }) => setScan(payload)).then((remove) => {
+    listen<ScanStatus>("scan-status", ({ payload }) => { if (active) setScan(payload); }).then((remove) => {
+      if (!active) { remove(); return; }
       unlisten = remove;
       invoke<ScanStatus>("scan_status").then((status) => { if (active) setScan(status); });
     });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
@@ -67,8 +67,6 @@ export default function App() {
   const [busyAction, setBusyAction] = useState<string | null>(null); // "trash" | "reveal:<path>" | null
   const [confirmTrash, setConfirmTrash] = useState<{ paths: string[]; bytes: number } | null>(null);
 
-  const unlistenRefs = useRef<Array<() => void>>([]);
-
   useEffect(() => {
     getVersion().then(setVersion).catch(() => setVersion(null));
   }, []);
@@ -83,7 +81,14 @@ export default function App() {
   }, [folder]);
 
   useEffect(() => {
-    listen<string>("scan-line", (e) => {
+    let disposed = false;
+    const removers: Array<() => void> = [];
+    const track = (subscription: Promise<() => void>) => subscription.then((remove) => {
+      if (disposed) remove();
+      else removers.push(remove);
+    });
+    track(listen<string>("scan-line", (e) => {
+      if (disposed) return;
       let evt: ScanEvent;
       try {
         evt = JSON.parse(e.payload);
@@ -110,34 +115,29 @@ export default function App() {
           setScanning(false);
           break;
       }
-    }).then((un) => {
-      unlistenRefs.current.push(un);
-    });
-    listen("scan-stopped", () => {
+    }));
+    track(listen("scan-stopped", () => {
+      if (disposed) return;
       setScanning(false);
       setStage(null);
       setCurrentScanPath(null);
       setFindings([]);
       setSelected(new Set());
-    }).then((un) => {
-      unlistenRefs.current.push(un);
-    });
-    listen("scan-stopping", () => {
+    }));
+    track(listen("scan-stopping", () => {
+      if (disposed) return;
       setStage("Stopping scan…");
-    }).then((un) => {
-      unlistenRefs.current.push(un);
-    });
-    listen<string>("scan-failed", (e) => {
+    }));
+    track(listen<string>("scan-failed", (e) => {
+      if (disposed) return;
       setError(e.payload);
       setScanning(false);
       setStage(null);
       setCurrentScanPath(null);
       setFindings([]);
       setSelected(new Set());
-    }).then((un) => {
-      unlistenRefs.current.push(un);
-    });
-    return () => unlistenRefs.current.forEach((un) => un());
+    }));
+    return () => { disposed = true; removers.forEach((remove) => remove()); };
   }, []);
 
   const runScan = useCallback(async (myFiles: boolean) => {
@@ -168,8 +168,12 @@ export default function App() {
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    listen("scan-my-files-requested", () => runScan(true)).then((remove) => { unlisten = remove; });
-    return () => unlisten?.();
+    let disposed = false;
+    listen("scan-my-files-requested", () => { if (!disposed) runScan(true); }).then((remove) => {
+      if (disposed) remove();
+      else unlisten = remove;
+    });
+    return () => { disposed = true; unlisten?.(); };
   }, [runScan]);
 
   const openFolder = useCallback(async (path: string) => {
