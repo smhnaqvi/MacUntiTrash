@@ -61,7 +61,7 @@ writeFileSync(join(generated, "tauri.conf.json"), JSON.stringify({
   },
   bundle: {
     targets: ["app"],
-    resources: [],
+    resources: ["PrivacyInfo.xcprivacy"],
     macOS: {
       entitlements: ".appstore/Entitlements.plist",
       files: { "embedded.provisionprofile": ".appstore/embedded.provisionprofile" },
@@ -85,6 +85,9 @@ if (entitlements["com.apple.security.app-sandbox"] !== true ||
 }
 if (plist(join(app, "Contents", "Info.plist")).CFBundleIdentifier !== identifier) {
   fail("Signed app bundle identifier does not match tauri.conf.json.");
+}
+if (!existsSync(join(app, "Contents", "Resources", "PrivacyInfo.xcprivacy"))) {
+  fail("Signed app is missing the disk space privacy manifest.");
 }
 run("xcrun", ["productbuild", "--sign", installerIdentity, "--component", app, "/Applications", pkg]);
 run("pkgutil", ["--check-signature", pkg]);
